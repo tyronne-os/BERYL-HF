@@ -195,15 +195,9 @@ async def update_key(request: KeyTestRequest):
 async def get_trending_models():
     try:
         api = HfApi(token=HF_TOKEN)
-        # Fetch trending models - using a simpler approach if trending_score is problematic
-        models = list_models(
-            sort="downloads",
-            direction=-1,
-            limit=20
-        )
-        
+        models = list(api.list_models(sort="downloads", limit=20))
         return {
-            "text": [{"id": m.modelId, "author": getattr(m, 'author', m.modelId.split('/')[0])} for m in models if m.modelId],
+            "text": [{"id": m.modelId, "author": getattr(m, 'author', m.modelId.split('/')[0] if '/' in m.modelId else m.modelId)} for m in models if m.modelId],
         }
     except Exception as e:
         print(f"Error in get_trending_models: {e}")
@@ -213,11 +207,7 @@ async def get_trending_models():
 async def get_trending_spaces():
     try:
         api = HfApi(token=HF_TOKEN)
-        spaces = api.list_spaces(
-            sort="trending_score",
-            direction=-1,
-            limit=10
-        )
+        spaces = api.list_spaces(sort="trending_score", limit=10)
         return {
             "spaces": [{"id": s.id, "author": s.author, "lastModified": s.lastModified} for s in spaces]
         }
