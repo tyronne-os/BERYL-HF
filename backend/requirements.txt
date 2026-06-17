@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+huggingface_hub
+pyautogui
+pillow
+python-dotenv
+requests
+pydantic
+sse-starlette
