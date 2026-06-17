@@ -195,8 +195,8 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({ onArtifactCreated }) => {
 
           </div>
         )}
+        <audio ref={audioRef} className="hidden" />
       </div>
-      <audio ref={audioRef} className="hidden" />
     </Draggable>
   );
 };
