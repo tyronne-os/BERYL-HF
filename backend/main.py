@@ -470,6 +470,379 @@ async def computer_use(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ═══════════════════════════════════════════════════════
+#  GEN SHERMAN — ACTIVE SECURITY SWEEPER ENGINE
+#  Hunts headless browsers, encoded shells, RAT ports,
+#  remote access tools, covert processes & session hijacks
+# ═══════════════════════════════════════════════════════
+
+_RAT_PORTS = {
+    4444, 1337, 5900, 5901, 5902, 6667, 7777, 8888,
+    9001, 31337, 12345, 54321, 1234, 4321, 6666, 2222,
+    9999, 11111, 55555, 65535
+}
+# Ports that are expected/safe on this dev machine
+_SAFE_PORTS = {
+    80, 443, 3000, 5173, 8000, 8080, 8188, 7860, 11434,
+    135, 139, 445, 5040, 1900, 5353,
+    # Windows RPC / ephemeral range start
+    49152, 49153, 49154, 49155, 49156, 49157, 49158,
+}
+
+# Known remote access / RAT process name fragments
+_RA_PROCS = [
+    "teamviewer", "anydesk", "logmein", "vncviewer", "vncserver",
+    "screenconnect", "radmin", "dameware", "laplink", "gotomypc",
+    "splashtop", "bomgar", "pcanywhere", "remoteutilities",
+    "ultraviewer", "rustdesk", "dwservice", "supremo",
+]
+
+# Living-off-the-land binaries commonly abused for fileless attacks
+_LOLBINS = {
+    "regsvr32.exe", "msbuild.exe", "installutil.exe", "regasm.exe",
+    "regsvcs.exe", "certutil.exe", "bitsadmin.exe", "cmstp.exe",
+    "msiexec.exe", "forfiles.exe", "odbcconf.exe", "pcalua.exe",
+    "xwizard.exe", "appsyncpublishingserver.exe", "synccmd.exe",
+}
+
+def _ps(cmd: str, timeout: int = 14) -> str:
+    """Run a PowerShell command non-interactively and return stdout."""
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
+            capture_output=True, text=True, timeout=timeout
+        )
+        return r.stdout.strip()
+    except Exception:
+        return ""
+
+
+@app.get("/security/sweep")
+async def security_sweep():
+    """
+    Full active system sweep.
+    Returns categorised threat objects ready for the GEN SHERMAN frontend.
+    """
+    results: dict = {
+        "headless_browsers":    [],
+        "encoded_commands":     [],
+        "remote_access":        [],
+        "suspicious_listeners": [],
+        "covert_processes":     [],
+        "rdp_sessions":         [],
+        "transparent_overlays": [],
+    }
+
+    # ── 1. WMI process table ─────────────────────────────────────────────
+    try:
+        raw = _ps(
+            "Get-WmiObject Win32_Process | "
+            "Select-Object ProcessId,Name,CommandLine,ParentProcessId,ExecutablePath | "
+            "ConvertTo-Json -Depth 2 -Compress"
+        )
+        if raw:
+            procs = json.loads(raw)
+            if isinstance(procs, dict):
+                procs = [procs]
+
+            for p in (procs or []):
+                if not p:
+                    continue
+                raw_name = p.get("Name") or ""
+                name     = raw_name.lower()
+                cmd      = (p.get("CommandLine") or "").lower()
+                exe_path = (p.get("ExecutablePath") or "").lower()
+                pid      = p.get("ProcessId")
+
+                # ── Headless / automation-flag browsers ──────────────────
+                if any(b in name for b in ["chrome", "chromium", "msedge", "brave"]):
+                    flags = ["--headless", "--remote-debugging-port", "--no-sandbox --disable-setuid-sandbox",
+                             "--disable-gpu --headless", "chrome-devtools-protocol"]
+                    if any(f in cmd for f in flags):
+                        results["headless_browsers"].append({
+                            "pid": pid, "name": raw_name,
+                            "detail": "Headless/automated browser with remote-debugging flags",
+                            "risk": "HIGH",
+                            "cmd": cmd[:120],
+                        })
+
+                # ── Encoded / obfuscated PowerShell ──────────────────────
+                if any(n in name for n in ["powershell", "pwsh"]):
+                    if any(f in cmd for f in ["-enc ", "-e ", "encodedcommand", "frombase64string"]):
+                        results["encoded_commands"].append({
+                            "pid": pid, "name": raw_name,
+                            "detail": "Obfuscated/encoded PowerShell payload",
+                            "risk": "CRITICAL",
+                            "cmd": cmd[:120],
+                        })
+                    elif any(f in cmd for f in ["-windowstyle hidden", "-w hidden", "-noexit -c", "-nop -w hidden"]):
+                        results["encoded_commands"].append({
+                            "pid": pid, "name": raw_name,
+                            "detail": "Hidden-window PowerShell session",
+                            "risk": "HIGH",
+                            "cmd": cmd[:120],
+                        })
+
+                # ── Script interpreter abuse ──────────────────────────────
+                if name in ["wscript.exe", "cscript.exe", "mshta.exe"]:
+                    results["covert_processes"].append({
+                        "pid": pid, "name": raw_name,
+                        "detail": "Script host process — common fileless-attack vector",
+                        "risk": "MEDIUM",
+                        "cmd": cmd[:120],
+                    })
+
+                # ── LOLBin abuse (running unusual args) ───────────────────
+                if name in _LOLBINS:
+                    suspicious = ["http", "download", "urlcache", "encode", "decode",
+                                  "javascript", "vbscript", "\\temp\\", "\\appdata\\"]
+                    if any(s in cmd for s in suspicious):
+                        results["covert_processes"].append({
+                            "pid": pid, "name": raw_name,
+                            "detail": "Living-off-the-land binary with suspicious arguments",
+                            "risk": "HIGH",
+                            "cmd": cmd[:120],
+                        })
+
+                # ── Remote access tools ───────────────────────────────────
+                if any(n in name for n in _RA_PROCS):
+                    results["remote_access"].append({
+                        "pid": pid, "name": raw_name,
+                        "detail": "Remote access tool detected — verify you installed this",
+                        "risk": "MEDIUM",
+                        "cmd": cmd[:120],
+                    })
+
+                # ── Processes running from temp / suspicious paths ────────
+                if exe_path:
+                    dirty_paths = ["\\temp\\", "\\tmp\\", "\\appdata\\roaming\\",
+                                   "\\downloads\\", "\\public\\", "c:\\windows\\temp\\"]
+                    suspicious_procs = ["powershell", "cmd", "python", "node", "ruby", "perl"]
+                    if any(d in exe_path for d in dirty_paths) and any(s in name for s in suspicious_procs):
+                        results["covert_processes"].append({
+                            "pid": pid, "name": raw_name,
+                            "detail": f"Interpreter running from suspicious path: {exe_path[:80]}",
+                            "risk": "HIGH",
+                            "cmd": cmd[:120],
+                        })
+
+    except Exception as e:
+        results["_wmi_error"] = str(e)
+
+    # ── 2. TCP listener scan ─────────────────────────────────────────────
+    try:
+        net_raw = _ps(
+            "Get-NetTCPConnection -State Listen | "
+            "Select-Object LocalPort,LocalAddress,OwningProcess | "
+            "ConvertTo-Json -Compress"
+        )
+        if net_raw:
+            conns = json.loads(net_raw)
+            if isinstance(conns, dict):
+                conns = [conns]
+            for c in (conns or []):
+                port  = c.get("LocalPort", 0)
+                addr  = c.get("LocalAddress", "")
+                owner = c.get("OwningProcess")
+                is_rat      = port in _RAT_PORTS
+                is_wildcard = addr in ("0.0.0.0", "::")
+                if is_rat or (is_wildcard and port not in _SAFE_PORTS and port < 50000):
+                    results["suspicious_listeners"].append({
+                        "pid":     owner,
+                        "port":    port,
+                        "address": addr,
+                        "name":    f"port:{port}",
+                        "detail":  (f"Listener {addr}:{port} — KNOWN RAT PORT" if is_rat
+                                    else f"Unexpected wildcard listener on {addr}:{port}"),
+                        "risk":    "CRITICAL" if is_rat else "MEDIUM",
+                    })
+    except Exception as e:
+        results["_net_error"] = str(e)
+
+    # ── 3. Established outbound connections to unusual destinations ───────
+    try:
+        est_raw = _ps(
+            "Get-NetTCPConnection -State Established | "
+            "Select-Object RemoteAddress,RemotePort,OwningProcess | "
+            "ConvertTo-Json -Compress"
+        )
+        if est_raw:
+            ests = json.loads(est_raw)
+            if isinstance(ests, dict):
+                ests = [ests]
+            for e in (ests or []):
+                rport = e.get("RemotePort", 0)
+                raddr = e.get("RemoteAddress", "")
+                # Flag connections TO known C2 ports from non-browser processes
+                if rport in _RAT_PORTS and not raddr.startswith("127.") and not raddr.startswith("::1"):
+                    results["suspicious_listeners"].append({
+                        "pid":     e.get("OwningProcess"),
+                        "port":    rport,
+                        "address": raddr,
+                        "name":    f"outbound:{rport}",
+                        "detail":  f"Outbound connection to {raddr}:{rport} — known C2 port",
+                        "risk":    "CRITICAL",
+                    })
+    except Exception:
+        pass
+
+    # ── 4. Remote Desktop / terminal session check ────────────────────────
+    try:
+        rdp = subprocess.run(["qwinsta"], capture_output=True, text=True, timeout=5)
+        if rdp.returncode == 0:
+            for line in rdp.stdout.splitlines()[1:]:
+                low = line.lower()
+                if "active" in low and ("rdp" in low or "console" not in low):
+                    results["rdp_sessions"].append({
+                        "pid":    None,
+                        "name":   "RDP",
+                        "detail": f"Active remote session detected: {line.strip()[:100]}",
+                        "risk":   "HIGH",
+                        "cmd":    line.strip(),
+                    })
+    except Exception:
+        pass
+
+    # ── 5. Transparent / layered window overlay scan ─────────────────────
+    # Uses inline C# to enumerate windows with WS_EX_LAYERED | WS_EX_TRANSPARENT
+    # that are visible but have no normal title bar — classic transparent overlay trick
+    transparent_ps = r"""
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public class WinEnum {
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc fn, IntPtr lp);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int n);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    public delegate bool EnumWindowsProc(IntPtr h, IntPtr lp);
+    public const int GWL_EXSTYLE = -20;
+    public const int WS_EX_TRANSPARENT = 0x20;
+    public const int WS_EX_LAYERED = 0x80000;
+    public static List<string> Scan() {
+        var r = new List<string>();
+        EnumWindows((h, lp) => {
+            if (!IsWindowVisible(h)) return true;
+            int ex = GetWindowLong(h, GWL_EXSTYLE);
+            bool layered = (ex & WS_EX_LAYERED) != 0;
+            bool transparent = (ex & WS_EX_TRANSPARENT) != 0;
+            if (layered || transparent) {
+                var sb = new StringBuilder(256);
+                GetWindowText(h, sb, 256);
+                uint pid = 0;
+                GetWindowThreadProcessId(h, out pid);
+                if (pid > 4) r.Add(pid + "|" + sb.ToString() + "|" + (layered?"LAYERED":"") + (transparent?"TRANSPARENT":""));
+            }
+            return true;
+        }, IntPtr.Zero);
+        return r;
+    }
+}
+'@ -ErrorAction SilentlyContinue
+try { [WinEnum]::Scan() } catch { @() }
+"""
+    try:
+        ov_raw = _ps(transparent_ps, timeout=18)
+        # known-safe layered window processes (taskbar, start menu, etc.)
+        safe_ov = {"explorer", "searchhost", "startmenuexperiencehost",
+                   "shellexperiencehost", "textinputhost", "dllhost", "dwm",
+                   "applicationframehost", "nvidia", "amdrsserv", "igcc"}
+        if ov_raw:
+            for line in ov_raw.strip().splitlines():
+                line = line.strip().strip('"')
+                if not line or "|" not in line:
+                    continue
+                parts = line.split("|", 2)
+                if len(parts) < 2:
+                    continue
+                try:
+                    ov_pid = int(parts[0])
+                except ValueError:
+                    continue
+                title  = parts[1] if len(parts) > 1 else ""
+                ov_style = parts[2] if len(parts) > 2 else ""
+
+                # Look up process name for this PID
+                pname_raw = _ps(f"(Get-Process -Id {ov_pid} -ErrorAction SilentlyContinue).ProcessName")
+                pname = pname_raw.strip().lower()
+
+                if pname and not any(s in pname for s in safe_ov):
+                    results["transparent_overlays"].append({
+                        "pid":    ov_pid,
+                        "name":   pname or f"PID:{ov_pid}",
+                        "detail": f"Transparent/layered window [{ov_style}] title=\"{title[:60]}\"",
+                        "risk":   "HIGH",
+                        "cmd":    "",
+                    })
+    except Exception as e:
+        results["_overlay_error"] = str(e)
+
+    return results
+
+
+class KillReq(BaseModel):
+    pid: int
+
+class NukeReq(BaseModel):
+    pids: List[int]
+
+
+@app.post("/security/kill_threat")
+async def kill_threat(req: KillReq):
+    """Terminate a single process by PID."""
+    try:
+        r = subprocess.run(
+            ["taskkill", "/F", "/PID", str(req.pid)],
+            capture_output=True, text=True, timeout=6
+        )
+        return {
+            "status":  "terminated" if r.returncode == 0 else "error",
+            "detail":  r.stdout.strip() or r.stderr.strip(),
+        }
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
+@app.post("/security/nuke_all")
+async def nuke_all(req: NukeReq):
+    """Terminate every PID in the list."""
+    results = []
+    for pid in req.pids:
+        try:
+            r = subprocess.run(
+                ["taskkill", "/F", "/PID", str(pid)],
+                capture_output=True, text=True, timeout=6
+            )
+            results.append({
+                "pid":    pid,
+                "status": "terminated" if r.returncode == 0 else "error",
+            })
+        except Exception as e:
+            results.append({"pid": pid, "status": "error", "detail": str(e)})
+    terminated = sum(1 for r in results if r["status"] == "terminated")
+    return {"results": results, "terminated": terminated, "total": len(req.pids)}
+
+
+@app.get("/security/network_snapshot")
+async def network_snapshot():
+    """All established TCP connections for live map display."""
+    try:
+        raw = _ps(
+            "Get-NetTCPConnection -State Established | "
+            "Select-Object LocalPort,RemoteAddress,RemotePort,OwningProcess | "
+            "ConvertTo-Json -Compress"
+        )
+        conns = json.loads(raw) if raw else []
+        if isinstance(conns, dict):
+            conns = [conns]
+        return {"connections": conns or [], "count": len(conns or [])}
+    except Exception as e:
+        return {"connections": [], "count": 0, "error": str(e)}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)
