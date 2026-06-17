@@ -16,6 +16,7 @@ import LivingDoc from './components/LivingDoc';
 import VoiceAgent from './components/VoiceAgent';
 import ComfyUIMirror from './components/ComfyUIMirror';
 import FlipMode from './components/FlipMode';
+import GenSherman from './components/GenSherman';
 import BottomNav from './components/BottomNav';
 import { Settings, Monitor, Zap, MessageSquare, TrendingUp, Globe, Cpu, DollarSign, Wand2, TerminalSquare, BookOpen, Minimize2, Server } from 'lucide-react';
 
@@ -25,7 +26,7 @@ const App: React.FC = () => {
   const [currentArtifact, setCurrentArtifact] = useState<any>(null);
   const [isComputerUseEnabled, setIsComputerUseEnabled] = useState(false);
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
-  const [currentPage, setCurrentPage] = useState<'chat' | 'trending' | 'spaces' | 'gpu' | 'cost' | 'studio' | 'cli' | 'docs' | 'compact' | 'ollama' | 'comfy' | 'fliip'>('chat');
+  const [currentPage, setCurrentPage] = useState<'chat' | 'trending' | 'spaces' | 'gpu' | 'cost' | 'studio' | 'cli' | 'docs' | 'compact' | 'ollama' | 'comfy' | 'fliip' | 'sherman'>('chat');
 
   const handleAddModel = (modelId: string) => {
     const author = modelId.split('/')[0];
@@ -81,6 +82,8 @@ const App: React.FC = () => {
         return <CLIDashboard />;
       case 'docs':
         return <LivingDoc navigateTo={setCurrentPage} />;
+      case 'sherman':
+        return <GenSherman />;
       default:
         return null;
     }
