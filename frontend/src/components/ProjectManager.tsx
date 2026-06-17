@@ -26,7 +26,7 @@ const ProjectManager: React.FC = () => {
 
   const fetchRepos = async () => {
     try {
-      const response = await axios.get('http://127.0.0.1:8000/github/repos');
+      const response = await axios.get('http://127.0.0.1:8001/github/repos');
       setRemoteRepos(response.data.repos);
     } catch (err) {
       console.error("Failed to fetch repos", err);
@@ -39,7 +39,7 @@ const ProjectManager: React.FC = () => {
     setResult(null);
     try {
       if (mode === 'create') {
-        const response = await axios.post('http://127.0.0.1:8000/create_project', {
+        const response = await axios.post('http://127.0.0.1:8001/create_project', {
           name: projectName,
           type: projectType,
           private: isPrivate

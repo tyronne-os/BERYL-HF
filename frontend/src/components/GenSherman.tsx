@@ -253,7 +253,7 @@ const GenSherman: React.FC = () => {
     addSweepLog('Compiling threat report...', 'scan');
 
     try {
-      const { data } = await axios.get<ThreatData>('http://127.0.0.1:8000/security/sweep');
+      const { data } = await axios.get<ThreatData>('http://127.0.0.1:8001/security/sweep');
       setScanProgress(100);
       setThreats(data);
       setLastScanTime(stamp());
@@ -267,7 +267,7 @@ const GenSherman: React.FC = () => {
       if (autoKill && total > 0) {
         const pids = activePids(data);
         addSweepLog(`Auto-eliminate: targeting ${pids.length} process(es)...`, 'kill');
-        await axios.post('http://127.0.0.1:8000/security/nuke_all', { pids });
+        await axios.post('http://127.0.0.1:8001/security/nuke_all', { pids });
         setEliminated(new Set(pids));
         addSweepLog(`Auto-eliminate: ${pids.length} threat(s) terminated`, 'terminated');
       }
@@ -281,7 +281,7 @@ const GenSherman: React.FC = () => {
   const killOne = async (pid: number, name: string) => {
     addSweepLog(`Targeting PID ${pid} (${name})...`, 'kill');
     try {
-      const { data } = await axios.post('http://127.0.0.1:8000/security/kill_threat', { pid });
+      const { data } = await axios.post('http://127.0.0.1:8001/security/kill_threat', { pid });
       if (data.status === 'terminated') {
         setEliminated(prev => new Set([...prev, pid]));
         addSweepLog(`TERMINATED: ${name} (PID ${pid}) ✓`, 'terminated');
@@ -299,7 +299,7 @@ const GenSherman: React.FC = () => {
     if (!pids.length) return;
     addSweepLog(`NUKE COMMAND — terminating ${pids.length} threats...`, 'kill');
     try {
-      const { data } = await axios.post('http://127.0.0.1:8000/security/nuke_all', { pids });
+      const { data } = await axios.post('http://127.0.0.1:8001/security/nuke_all', { pids });
       setEliminated(prev => new Set([...prev, ...pids]));
       addSweepLog(`${data.terminated}/${data.total} threats eliminated`, 'terminated');
     } catch {

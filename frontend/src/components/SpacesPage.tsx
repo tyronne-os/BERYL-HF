@@ -16,7 +16,7 @@ const SpacesPage: React.FC = () => {
   useEffect(() => {
     const fetchSpaces = async () => {
       try {
-        const response = await axios.get('http://127.0.0.1:8000/spaces');
+        const response = await axios.get('http://127.0.0.1:8001/spaces');
         setSpaces(response.data.spaces);
       } catch (err) {
         console.error("Failed to fetch trending spaces", err);

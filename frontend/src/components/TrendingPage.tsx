@@ -19,7 +19,7 @@ const TrendingPage: React.FC<TrendingPageProps> = ({ onAddModel }) => {
   useEffect(() => {
     const fetchTrending = async () => {
       try {
-        const response = await axios.get('http://127.0.0.1:8000/trending');
+        const response = await axios.get('http://127.0.0.1:8001/trending');
         setTrending(response.data.text);
       } catch (err) {
         console.error("Failed to fetch trending models", err);

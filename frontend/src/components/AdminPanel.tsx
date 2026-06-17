@@ -21,7 +21,7 @@ const AdminPanel: React.FC = () => {
 
   const fetchKeys = async () => {
     try {
-      const response = await axios.get('http://127.0.0.1:8000/keys');
+      const response = await axios.get('http://127.0.0.1:8001/keys');
       setKeys(response.data);
     } catch (err) {
       console.error("Failed to fetch keys", err);
@@ -33,7 +33,7 @@ const AdminPanel: React.FC = () => {
     setIsTesting(true);
     setTestResult(null);
     try {
-      const response = await axios.post('http://127.0.0.1:8000/test_key', {
+      const response = await axios.post('http://127.0.0.1:8001/test_key', {
         key_type: keyType,
         token: newKey
       });
@@ -47,7 +47,7 @@ const AdminPanel: React.FC = () => {
 
   const handleSaveKey = async () => {
     try {
-      await axios.post('http://127.0.0.1:8000/update_key', {
+      await axios.post('http://127.0.0.1:8001/update_key', {
         key_type: keyType,
         token: newKey
       });
@@ -61,7 +61,7 @@ const AdminPanel: React.FC = () => {
 
   const saveVoiceSettings = async () => {
      try {
-        await axios.post('http://127.0.0.1:8000/voice/config', {
+        await axios.post('http://127.0.0.1:8001/voice/config', {
            model: selectedVoice,
            speed: voiceSpeed
         });

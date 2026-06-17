@@ -41,7 +41,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({ onArtifactCreated }) => {
       const formData = new FormData();
       formData.append('text_fallback', textFallback);
 
-      const response = await axios.post('http://127.0.0.1:8000/voice/orchestrate', formData, {
+      const response = await axios.post('http://127.0.0.1:8001/voice/orchestrate', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
 

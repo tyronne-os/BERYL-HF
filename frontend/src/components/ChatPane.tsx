@@ -48,7 +48,7 @@ const ChatPane: React.FC<ChatPaneProps> = ({ model, isComputerUseEnabled, onArti
     try {
       if (isComputerUseEnabled) {
         // Computer Use Path
-        const response = await axios.post('http://127.0.0.1:8000/computer_use', {
+        const response = await axios.post('http://127.0.0.1:8001/computer_use', {
           instruction: input
         });
         
@@ -62,7 +62,7 @@ const ChatPane: React.FC<ChatPaneProps> = ({ model, isComputerUseEnabled, onArti
       }
 
       // Normal Chat Path
-      const response = await fetch('http://127.0.0.1:8000/chat', {
+      const response = await fetch('http://127.0.0.1:8001/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

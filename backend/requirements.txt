@@ -1,5 +1,5 @@
 fastapi
-uvicorn
+uvicorn[standard]
 huggingface_hub
 pyautogui
 pillow
@@ -7,3 +7,4 @@ python-dotenv
 requests
 pydantic
 sse-starlette
+PyGithub

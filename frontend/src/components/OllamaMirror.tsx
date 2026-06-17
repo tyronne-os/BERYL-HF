@@ -23,7 +23,7 @@ const OllamaMirror: React.FC<OllamaMirrorProps> = ({ onSelectModel, navigateTo }
 
   const fetchModels = async () => {
     try {
-      const response = await axios.get('http://127.0.0.1:8000/ollama/tags');
+      const response = await axios.get('http://127.0.0.1:8001/ollama/tags');
       if (response.data && response.data.models) {
         setModels(response.data.models);
       }
@@ -46,7 +46,7 @@ const OllamaMirror: React.FC<OllamaMirrorProps> = ({ onSelectModel, navigateTo }
     setIsPulling(true);
     setPullStatus('Initializing pull sequence...');
     try {
-      await axios.post('http://127.0.0.1:8000/ollama/pull', { name: pullInput.trim() });
+      await axios.post('http://127.0.0.1:8001/ollama/pull', { name: pullInput.trim() });
       setPullStatus(`Pulling ${pullInput.trim()} in the background...`);
       setPullInput('');
       // It will auto-refresh via the interval
