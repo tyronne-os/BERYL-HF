@@ -796,6 +796,138 @@ try { [WinEnum]::Scan() } catch { @() }
     return results
 
 
+@app.get("/security/posture")
+async def security_posture():
+    """Fast REAL security posture via psutil — drives the GEN SHERMAN watch grid.
+    No simulation: live connection/listener/process counts."""
+    import psutil
+    established = 0
+    listeners = 0
+    rat_listeners = 0
+    remote_ips = set()
+    suspicious_ports = []
+    try:
+        for c in psutil.net_connections(kind="inet"):
+            if c.status == "ESTABLISHED":
+                established += 1
+                if c.raddr:
+                    remote_ips.add(c.raddr.ip)
+            elif c.status == "LISTEN":
+                listeners += 1
+                port = c.laddr.port if c.laddr else 0
+                if port in _RAT_PORTS:
+                    rat_listeners += 1
+                    suspicious_ports.append(port)
+    except Exception:
+        pass
+
+    # Process posture (real)
+    total_procs = 0
+    browser_procs = 0
+    headless = 0
+    temp_execs = 0
+    try:
+        for p in psutil.process_iter(["name", "exe", "cmdline"]):
+            total_procs += 1
+            try:
+                name = (p.info["name"] or "").lower()
+                if any(b in name for b in ["chrome", "msedge", "brave", "chromium", "firefox"]):
+                    browser_procs += 1
+                    cl = " ".join(p.info.get("cmdline") or []).lower()
+                    if "--headless" in cl or "--remote-debugging-port" in cl:
+                        headless += 1
+                exe = (p.info.get("exe") or "").lower()
+                if exe and ("\\temp\\" in exe or "\\appdata\\roaming\\" in exe) and any(s in name for s in ["powershell", "cmd", "python", "node"]):
+                    temp_execs += 1
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return {
+        "established": established,
+        "listeners": listeners,
+        "remote_ips": len(remote_ips),
+        "rat_listeners": rat_listeners,
+        "suspicious_ports": suspicious_ports,
+        "total_procs": total_procs,
+        "browser_procs": browser_procs,
+        "headless": headless,
+        "temp_execs": temp_execs,
+    }
+
+
+# Free, local model for security analysis & reporting (Ollama — no HF cost)
+SECURITY_MODEL = "gemma3:270m"
+
+def _ollama_chat(model: str, messages: list, timeout: int = 60) -> str:
+    """Call a local Ollama model (free/unlimited). Returns content or ''."""
+    try:
+        r = requests.post(
+            "http://localhost:11434/api/chat",
+            json={"model": model, "messages": messages, "stream": False},
+            timeout=timeout,
+        )
+        return r.json().get("message", {}).get("content", "")
+    except Exception:
+        return ""
+
+
+class AnalyzeReq(BaseModel):
+    threats: Dict[str, Any]
+    model: Optional[str] = None
+
+@app.post("/security/analyze")
+async def security_analyze(req: AnalyzeReq):
+    """AI threat triage + report from a FREE local model (default gemma3:270m).
+    Falls back to a deterministic report if Ollama is unavailable."""
+    # Summarise the threat payload
+    cats = []
+    total = 0
+    crit = 0
+    for key, items in (req.threats or {}).items():
+        if key.startswith("_") or not isinstance(items, list) or not items:
+            continue
+        total += len(items)
+        crit += sum(1 for it in items if isinstance(it, dict) and it.get("risk") == "CRITICAL")
+        sample = "; ".join(
+            f"{it.get('name','?')} ({it.get('risk','?')}): {it.get('detail','')[:80]}"
+            for it in items[:4] if isinstance(it, dict)
+        )
+        cats.append(f"- {key} [{len(items)}]: {sample}")
+
+    threat_text = "\n".join(cats) if cats else "No active threats found in the sweep."
+    model = req.model or SECURITY_MODEL
+
+    system = ("You are GEN SHERMAN, a concise Windows security analyst. "
+              "Given a system sweep, write a SHORT report: 1) one-line verdict, "
+              "2) the top risks in plain English, 3) recommended actions. "
+              "Be calm, factual, no markdown headers, under 180 words.")
+    user = f"System sweep results:\n{threat_text}\n\nTotals: {total} findings, {crit} critical."
+
+    report = _ollama_chat(model, [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ])
+
+    if not report:
+        # Deterministic fallback so the feature never breaks
+        if total == 0:
+            verdict = "All clear — no headless browsers, RAT ports, overlays or remote sessions detected."
+            actions = "Keep the sweeper running on a schedule. No action needed."
+        else:
+            verdict = f"{total} finding(s) detected, {crit} critical. Review and eliminate unrecognised processes."
+            actions = "Open each finding, confirm you started the process, and ELIMINATE anything unfamiliar."
+        report = f"{verdict}\n\n{actions}"
+        used_model = "rule-based (Ollama offline)"
+    else:
+        used_model = model
+
+    level = "CRITICAL" if crit else ("ELEVATED" if total else "SECURE")
+    return {"report": report.strip(), "model": used_model, "level": level,
+            "total": total, "critical": crit}
+
+
 class KillReq(BaseModel):
     pid: int
 

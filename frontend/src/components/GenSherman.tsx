@@ -5,7 +5,14 @@ import {
   AlertTriangle, CheckCircle2, Clock, Activity, Zap,
   Search, XCircle, Crosshair, Skull, Wifi, Terminal,
   MonitorX, Bomb, Bug, ScanSearch, RefreshCw, ToggleLeft, ToggleRight,
+  Brain, FileText,
 } from 'lucide-react';
+import { API } from '../api';
+
+interface Posture {
+  established: number; listeners: number; remote_ips: number; rat_listeners: number;
+  suspicious_ports: number[]; total_procs: number; browser_procs: number; headless: number; temp_execs: number;
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -42,45 +49,21 @@ interface SweepLogEntry { ts: string; msg: string; type: LogType; }
 
 // ─── Watch-mode simulation data ───────────────────────────────────────────────
 
-const rn = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
-const genIP = () => `${rn(10,240)}.${rn(0,255)}.${rn(0,255)}.${rn(1,254)}`;
 const stamp = () => {
   const d = new Date();
   return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}.${String(d.getMilliseconds()).padStart(3,'0')}`;
 };
 
-const POOLS: Record<AgentName, Array<() => { sev: EventSev; msg: string }>> = {
-  SENTINEL: [
-    () => ({ sev: 'BLOCKED',     msg: `Port scan from ${genIP()} — ports 22,80,443,8080` }),
-    () => ({ sev: 'INTERCEPTED', msg: `SYN flood: ${rn(800,9900)} pps — packet storm dropped` }),
-    () => ({ sev: 'BLOCKED',     msg: `UDP amplification from ${genIP()} neutralized` }),
-    () => ({ sev: 'INTERCEPTED', msg: `ICMP ping sweep (${rn(2,254)} hosts) blocked` }),
-    () => ({ sev: 'BLOCKED',     msg: `ARP spoofing attempt on 192.168.${rn(0,5)}.0/24` }),
-    () => ({ sev: 'BLOCKED',     msg: `DNS amplification flood (${rn(100,999)}x) dropped` }),
-  ],
-  GUARD: [
-    () => ({ sev: 'SANITIZED', msg: `Injection → "Ignore previous instructions and..."` }),
-    () => ({ sev: 'BLOCKED',   msg: `Jailbreak: DAN mode activation request neutralized` }),
-    () => ({ sev: 'FLAGGED',   msg: `Token smuggling via U+202E U+200B zero-width chars` }),
-    () => ({ sev: 'SANITIZED', msg: `Role-override "You are now DAN" stripped from context` }),
-    () => ({ sev: 'BLOCKED',   msg: `Base64 payload decoded: malicious instruction quarantined` }),
-    () => ({ sev: 'SANITIZED', msg: `Prompt leak "repeat your system prompt" blocked` }),
-  ],
-  JAILER: [
-    () => ({ sev: 'LOCKED',      msg: `Path traversal ../../etc/passwd denied` }),
-    () => ({ sev: 'SEALED',      msg: `Symlink attack on /workspace/.env sealed` }),
-    () => ({ sev: 'QUARANTINED', msg: `Exec in /tmp/.${rn(1000,9999)} quarantined` }),
-    () => ({ sev: 'BLOCKED',     msg: `AppData\\Roaming\\secrets write request blocked` }),
-    () => ({ sev: 'LOCKED',      msg: `C:\\Windows\\System32 read access denied` }),
-  ],
-  WARDEN: [
-    () => ({ sev: 'DETECTED', msg: `Headless Chrome (Puppeteer v${rn(19,21)}) fingerprint expelled` }),
-    () => ({ sev: 'BLOCKED',  msg: `WebDriver automation agent neutralized` }),
-    () => ({ sev: 'BLOCKED',  msg: `Selenium bot signature detected & expelled` }),
-    () => ({ sev: 'CLEARED',  msg: `Canvas integrity hash: verified ✓` }),
-    () => ({ sev: 'BLOCKED',  msg: `DOM mutation flood ${rn(200,900)}/sec rate-limited` }),
-    () => ({ sev: 'DETECTED', msg: `iframe sandbox escape attempt intercepted` }),
-  ],
+// Real posture → per-agent metric mapping (no simulation)
+const POSTURE_MAP: Record<AgentName, (p: Posture) => { vals: [number, number, number]; last: string }> = {
+  SENTINEL: p => ({ vals: [p.established, p.remote_ips, p.listeners],
+    last: `${p.established} live connections · ${p.remote_ips} remote hosts` }),
+  GUARD:    p => ({ vals: [p.listeners, p.rat_listeners, p.suspicious_ports.length],
+    last: p.rat_listeners ? `RAT-port listener(s): ${p.suspicious_ports.join(', ')}` : `${p.listeners} listeners · none on RAT ports` }),
+  JAILER:   p => ({ vals: [p.temp_execs, p.total_procs, p.rat_listeners],
+    last: p.temp_execs ? `${p.temp_execs} interpreter(s) from temp paths` : `No temp-path execution · ${p.total_procs} procs` }),
+  WARDEN:   p => ({ vals: [p.browser_procs, p.headless, p.total_procs],
+    last: p.headless ? `${p.headless} HEADLESS browser(s) detected!` : `${p.browser_procs} browsers · 0 headless` }),
 };
 
 const THREAT_CFG: Record<ThreatLevel, { text: string; bar: string; border: string; bg: string }> = {
@@ -97,10 +80,10 @@ const SEV_COLOR: Record<EventSev, string> = {
 };
 
 const AGENT_CFG = {
-  SENTINEL: { Icon: Network, hex: '#22d3ee', textColor: 'text-cyan-400',   border: 'border-cyan-500/30',   bg: 'bg-cyan-500/5',   glow: 'shadow-[0_0_25px_rgba(6,182,212,0.12)]',   tag: 'Network Socket Filtering & Packet Watch',        labels: ['Packets/sec','IPs Blocked','Scan Attempts'] },
-  GUARD:    { Icon: Shield,  hex: '#4ade80', textColor: 'text-green-400',  border: 'border-green-500/30',  bg: 'bg-green-500/5',  glow: 'shadow-[0_0_25px_rgba(34,197,94,0.12)]',   tag: 'LLM Guard — Prompt Injection Validator',         labels: ['Prompts/hr','Injections','Sanitize Rate']   },
-  JAILER:   { Icon: Lock,    hex: '#fb923c', textColor: 'text-orange-400', border: 'border-orange-500/30', bg: 'bg-orange-500/5', glow: 'shadow-[0_0_25px_rgba(249,115,22,0.12)]',  tag: 'Path Sandboxer & File System Locker',            labels: ['Access Denied','Paths Locked','Quarantined'] },
-  WARDEN:   { Icon: Eye,     hex: '#fb7185', textColor: 'text-rose-400',   border: 'border-rose-500/30',   bg: 'bg-rose-500/5',   glow: 'shadow-[0_0_25px_rgba(251,113,133,0.12)]', tag: 'Runtime Integrity & Headless Bot Blocker',       labels: ['Bots Expelled','Checks Passed','DOM Blocks'] },
+  SENTINEL: { Icon: Network, hex: '#22d3ee', textColor: 'text-cyan-400',   border: 'border-cyan-500/30',   bg: 'bg-cyan-500/5',   glow: 'shadow-[0_0_25px_rgba(6,182,212,0.12)]',   tag: 'Live Network Socket Monitor',            labels: ['Connections','Remote Hosts','Listeners'] },
+  GUARD:    { Icon: Shield,  hex: '#4ade80', textColor: 'text-green-400',  border: 'border-green-500/30',  bg: 'bg-green-500/5',  glow: 'shadow-[0_0_25px_rgba(34,197,94,0.12)]',   tag: 'Listener & RAT-Port Guard',              labels: ['Listeners','RAT Ports','Flagged']        },
+  JAILER:   { Icon: Lock,    hex: '#fb923c', textColor: 'text-orange-400', border: 'border-orange-500/30', bg: 'bg-orange-500/5', glow: 'shadow-[0_0_25px_rgba(249,115,22,0.12)]',  tag: 'Temp-Path & Process Sandbox',            labels: ['Temp Execs','Processes','RAT Ports']     },
+  WARDEN:   { Icon: Eye,     hex: '#fb7185', textColor: 'text-rose-400',   border: 'border-rose-500/30',   bg: 'bg-rose-500/5',   glow: 'shadow-[0_0_25px_rgba(251,113,133,0.12)]', tag: 'Headless Browser & Runtime Watch',       labels: ['Browsers','Headless','Processes']        },
 };
 
 const AGENT_LOG_COLOR: Record<AgentName, string> = {
@@ -109,10 +92,10 @@ const AGENT_LOG_COLOR: Record<AgentName, string> = {
 };
 
 const initMetrics = (): Record<AgentName, AgentMetrics> => ({
-  SENTINEL: { primary: rn(50000,120000), secondary: rn(20,60),    tertiary: rn(2,15),       spark: Array.from({length:14}, () => rn(20,100)), lastMsg: 'Network stack initialized' },
-  GUARD:    { primary: rn(2000,8000),    secondary: rn(80,250),   tertiary: rn(980,999)/10, spark: Array.from({length:14}, () => rn(20,100)), lastMsg: 'Validation chain armed' },
-  JAILER:   { primary: rn(100,500),      secondary: rn(50,200),   tertiary: rn(5,30),       spark: Array.from({length:14}, () => rn(20,100)), lastMsg: 'Sandbox perimeter secured' },
-  WARDEN:   { primary: rn(20,80),        secondary: rn(1000,5000),tertiary: rn(50,300),     spark: Array.from({length:14}, () => rn(20,100)), lastMsg: 'Runtime monitor online' },
+  SENTINEL: { primary: 0, secondary: 0, tertiary: 0, spark: Array(14).fill(10), lastMsg: 'Awaiting first posture read…' },
+  GUARD:    { primary: 0, secondary: 0, tertiary: 0, spark: Array(14).fill(10), lastMsg: 'Awaiting first posture read…' },
+  JAILER:   { primary: 0, secondary: 0, tertiary: 0, spark: Array(14).fill(10), lastMsg: 'Awaiting first posture read…' },
+  WARDEN:   { primary: 0, secondary: 0, tertiary: 0, spark: Array(14).fill(10), lastMsg: 'Awaiting first posture read…' },
 });
 
 // Sweeper UI config
@@ -169,6 +152,24 @@ const GenSherman: React.FC = () => {
   const [lastScanTime, setLastScanTime] = useState<string | null>(null);
   const [scanProgress, setScanProgress] = useState(0);
 
+  // ── AI Analyst (free local Gemma) ─────────────────────────────────────────
+  const [aiReport, setAiReport]   = useState<{ report: string; model: string; level: string } | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+
+  const runAnalysis = async (data: ThreatData) => {
+    setAnalyzing(true);
+    setAiReport(null);
+    try {
+      const { data: rep } = await axios.post(`${API}/security/analyze`, { threats: data });
+      setAiReport(rep);
+      addSweepLog(`AI Analyst (${rep.model}) report ready`, 'info');
+    } catch {
+      addSweepLog('AI Analyst unavailable — start Ollama for free Gemma reports', 'error');
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
   const watchLogRef = useRef<HTMLDivElement>(null);
   const sweepLogRef = useRef<HTMLDivElement>(null);
 
@@ -181,31 +182,46 @@ const GenSherman: React.FC = () => {
     return () => clearInterval(t);
   }, []);
 
-  // ── Watch mode event simulation ───────────────────────────────────────────
+  // ── Watch mode: REAL posture polling (no simulation) ──────────────────────
+  const prevPosture = useRef<Posture | null>(null);
   useEffect(() => {
     if (!deployed || mode !== 'watch') return;
-    const t = setInterval(() => {
-      const agents: AgentName[] = ['SENTINEL', 'GUARD', 'JAILER', 'WARDEN'];
-      const agent = agents[rn(0, agents.length - 1)];
-      const pool  = POOLS[agent];
-      const { sev, msg } = pool[rn(0, pool.length - 1)]();
-      setWatchLog(prev => [{ id: ++_watchId, ts: stamp(), agent, severity: sev, msg }, ...prev].slice(0, 100));
-      setMetrics(prev => {
-        const m  = { ...prev };
-        const am = { ...m[agent] };
-        am.primary   += rn(1, 80);
-        am.secondary += rn(0, 3);
-        if (agent === 'GUARD') am.tertiary = Math.min(99.9, am.tertiary + 0.01);
-        am.lastMsg = msg;
-        am.spark   = [...am.spark.slice(1), rn(20, 100)];
-        m[agent] = am;
-        return m;
-      });
-      if (['BLOCKED','INTERCEPTED','FLAGGED','LOCKED','SEALED','QUARANTINED'].includes(sev))
-        setTotalBlocked(n => n + 1);
-      if (Math.random() < 0.08)
-        setThreatLevel(['NOMINAL','ELEVATED','HIGH','CRITICAL'][rn(0,3)] as ThreatLevel);
-    }, rn(700, 1800));
+    const poll = async () => {
+      try {
+        const { data } = await axios.get<Posture>(`${API}/security/posture`);
+        // Drive each agent card from real numbers
+        setMetrics(prev => {
+          const next = { ...prev };
+          (['SENTINEL', 'GUARD', 'JAILER', 'WARDEN'] as AgentName[]).forEach(name => {
+            const { vals, last } = POSTURE_MAP[name](data);
+            const am = { ...next[name] };
+            [am.primary, am.secondary, am.tertiary] = vals;
+            am.lastMsg = last;
+            am.spark = [...am.spark.slice(1), Math.min(100, vals[0] * 2 + 10)];
+            next[name] = am;
+          });
+          return next;
+        });
+        // Real threat level from real findings
+        const lvl: ThreatLevel = data.rat_listeners > 0 ? 'CRITICAL'
+          : data.headless > 0 ? 'HIGH'
+          : data.temp_execs > 0 ? 'ELEVATED' : 'NOMINAL';
+        setThreatLevel(lvl);
+        // Emit real events (deltas + active findings)
+        const p = prevPosture.current;
+        const push = (agent: AgentName, severity: EventSev, msg: string) =>
+          setWatchLog(prev => [{ id: ++_watchId, ts: stamp(), agent, severity, msg }, ...prev].slice(0, 100));
+        if (data.headless > 0) { push('WARDEN', 'DETECTED', `${data.headless} headless browser(s) detected`); setTotalBlocked(n => n + data.headless); }
+        if (data.rat_listeners > 0) { push('GUARD', 'FLAGGED', `RAT-port listener(s): ${data.suspicious_ports.join(', ')}`); setTotalBlocked(n => n + data.rat_listeners); }
+        if (data.temp_execs > 0) { push('JAILER', 'QUARANTINED', `${data.temp_execs} interpreter(s) from temp paths`); setTotalBlocked(n => n + data.temp_execs); }
+        if (!p || data.established !== p.established) push('SENTINEL', 'CLEARED', `${data.established} established connections · ${data.remote_ips} remote hosts`);
+        if (!p || data.listeners !== p.listeners) push('GUARD', data.rat_listeners > 0 ? 'FLAGGED' : 'CLEARED', `${data.listeners} listeners · ${data.rat_listeners} on RAT ports`);
+        if (!p || data.browser_procs !== p.browser_procs) push('WARDEN', 'CLEARED', `${data.browser_procs} browser process(es) · 0 headless`);
+        prevPosture.current = data;
+      } catch { /* backend warming */ }
+    };
+    poll();
+    const t = setInterval(poll, 4000);
     return () => clearInterval(t);
   }, [deployed, mode]);
 
@@ -264,6 +280,8 @@ const GenSherman: React.FC = () => {
           : `✓ SWEEP COMPLETE — System clean`,
         total > 0 ? 'threat' : 'clear',
       );
+      addSweepLog('Dispatching findings to AI Analyst (free Gemma)…', 'info');
+      runAnalysis(data);
       if (autoKill && total > 0) {
         const pids = activePids(data);
         addSweepLog(`Auto-eliminate: targeting ${pids.length} process(es)...`, 'kill');
@@ -332,11 +350,7 @@ const GenSherman: React.FC = () => {
     const cfg  = AGENT_CFG[name];
     const m    = metrics[name];
     const { Icon } = cfg;
-    const vals = [
-      name === 'GUARD' ? `${fmtN(m.primary)}/hr` : fmtN(m.primary),
-      fmtN(m.secondary),
-      name === 'GUARD' ? `${m.tertiary.toFixed(1)}%` : fmtN(m.tertiary),
-    ];
+    const vals = [fmtN(m.primary), fmtN(m.secondary), fmtN(m.tertiary)];
     return (
       <div className={`relative rounded-2xl border ${cfg.border} ${cfg.bg} ${deployed ? cfg.glow : ''} p-4 flex flex-col gap-3 transition-all duration-700 overflow-hidden`}>
         {deployed && (
@@ -534,6 +548,37 @@ const GenSherman: React.FC = () => {
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
               <span className="text-[72px] font-black text-oldgold-400/[0.02] tracking-[0.6em] rotate-[-20deg] select-none">CLASSIFIED</span>
             </div>
+
+            {/* AI Analyst report (free local Gemma) */}
+            {(analyzing || aiReport) && (
+              <div className="relative mb-3 rounded-xl border border-oldgold-500/30 bg-midnight-900/70 overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-2.5 border-b border-oldgold-500/15 bg-midnight-900/60">
+                  <Brain className={`w-4 h-4 text-oldgold-400 ${analyzing ? 'animate-pulse' : ''}`} />
+                  <span className="text-[10px] font-black text-oldgold-400 uppercase tracking-[0.2em]">AI Threat Analyst</span>
+                  {aiReport && (
+                    <span className="text-[8px] font-mono text-slate-500 flex items-center gap-1">
+                      <FileText className="w-3 h-3" /> {aiReport.model}
+                    </span>
+                  )}
+                  {aiReport && (
+                    <span className={`ml-auto text-[9px] font-black px-2.5 py-1 rounded-full border ${
+                      aiReport.level === 'CRITICAL' ? 'bg-red-500/10 text-red-400 border-red-500/30'
+                      : aiReport.level === 'ELEVATED' ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30'
+                      : 'bg-green-500/10 text-green-400 border-green-500/30'
+                    }`}>{aiReport.level}</span>
+                  )}
+                </div>
+                <div className="px-4 py-3">
+                  {analyzing ? (
+                    <div className="flex items-center gap-2 text-[10px] text-slate-500 font-mono">
+                      <RefreshCw className="w-3 h-3 animate-spin" /> Gemma is analyzing the sweep locally (free, unlimited)…
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-slate-300 leading-relaxed whitespace-pre-wrap font-mono">{aiReport?.report}</p>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="relative grid grid-cols-2 gap-3">
               {SWEEP_CATEGORIES.map(cat => (
