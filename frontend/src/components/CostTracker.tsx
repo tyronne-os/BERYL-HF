@@ -140,6 +140,52 @@ const CostTracker: React.FC = () => {
           </div>
         )}
 
+        {/* FREE PRO INFERENCE ALLOWANCE TRACKER — free→paid transition */}
+        {(() => {
+          const used = bill.compute.inference_used;
+          const total = bill.compute.inference_total;
+          const remaining = Math.max(total - used, 0);
+          const pct = total > 0 ? Math.min((used / total) * 100, 100) : 0;
+          const onPaid = used >= total;
+          const nearLimit = pct >= 80 && !onPaid;
+          const overage = onPaid ? used - total : 0;
+          return (
+            <div className={`mb-8 rounded-2xl border p-6 ${onPaid ? 'border-red-500/40 bg-red-500/5' : nearLimit ? 'border-yellow-500/40 bg-yellow-500/5' : 'border-green-500/30 bg-green-500/5'}`}>
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                <div className="flex items-center space-x-3">
+                  <Gauge className={`w-6 h-6 ${onPaid ? 'text-red-400' : nearLimit ? 'text-yellow-400' : 'text-green-400'}`} />
+                  <div>
+                    <h2 className="text-lg font-bold">Free PRO Inference Allowance</h2>
+                    <p className="text-xs text-slate-500">$2.00/mo included with PRO · MiniMax-M3 + other provider calls draw from this first</p>
+                  </div>
+                </div>
+                <span className={`text-[11px] font-black px-3 py-1.5 rounded-full border uppercase tracking-widest ${onPaid ? 'bg-red-500/15 text-red-400 border-red-500/40' : nearLimit ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/40' : 'bg-green-500/15 text-green-400 border-green-500/40'}`}>
+                  {onPaid ? '⚠ Paid Inference Active' : nearLimit ? 'Approaching Limit' : '✓ On Free Tier'}
+                </span>
+              </div>
+              <div className="relative w-full bg-slate-950 h-4 rounded-full overflow-hidden border border-slate-800 mb-3">
+                <div className={`h-full transition-all duration-700 ${onPaid ? 'bg-red-500' : nearLimit ? 'bg-yellow-500' : 'bg-green-500'}`} style={{ width: `${pct}%` }} />
+                {/* transition marker at 100% (the free→paid line) */}
+                <div className="absolute top-0 right-0 h-full w-0.5 bg-white/40" title="Free → Paid transition" />
+              </div>
+              <div className="flex items-center justify-between text-sm flex-wrap gap-2">
+                <span className="text-slate-400">Used <span className="font-bold text-slate-200">${used.toFixed(2)}</span> of <span className="font-bold text-slate-200">${total.toFixed(2)}</span> free</span>
+                {onPaid ? (
+                  <span className="text-red-400 font-bold">Free exhausted — now billing paid inference (+${overage.toFixed(2)} over)</span>
+                ) : (
+                  <span className="text-slate-400"><span className="font-bold text-green-400">${remaining.toFixed(2)}</span> free remaining before paid kicks in</span>
+                )}
+              </div>
+              {nearLimit && !onPaid && (
+                <p className="mt-3 text-xs text-yellow-400/90 flex items-center space-x-2"><Activity className="w-3.5 h-3.5" /><span>You're at {pct.toFixed(0)}% of free inference. After ${total.toFixed(2)}, calls bill to your ${bill.credits.toFixed(2)} credits / payment method. Switch heavy work to local Ollama models to stay free.</span></p>
+              )}
+              {onPaid && (
+                <p className="mt-3 text-xs text-red-400/90 flex items-center space-x-2"><Activity className="w-3.5 h-3.5" /><span>Free allowance spent. M3 calls now bill paid inference against your ${bill.credits.toFixed(2)} credit balance. Consider the local Ollama fallback for unlimited free generation.</span></p>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Top stat row */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6">

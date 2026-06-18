@@ -245,6 +245,107 @@ async def pull_ollama_model(request: OllamaPullRequest):
     except Exception as e:
         return {"status": "error", "detail": str(e)}
 
+
+class ModelfileReq(BaseModel):
+    name: str
+    base: str
+    system: str = ""
+    temperature: float = 0.7
+    num_ctx: int = 4096
+    extra_params: Dict[str, Any] = {}
+
+@app.post("/ollama/create")
+async def ollama_create(req: ModelfileReq):
+    """FLIP MODE forge — build a REAL custom local model via an Ollama Modelfile.
+    Runs free/unlimited on local hardware (no GPU training needed)."""
+    # Human-readable Modelfile for the UI preview
+    mf = f"FROM {req.base}\n"
+    if req.system.strip():
+        mf += f'SYSTEM """{req.system.strip()}"""\n'
+    mf += f"PARAMETER temperature {req.temperature}\nPARAMETER num_ctx {req.num_ctx}\n"
+
+    # Current Ollama /api/create format: from + system + parameters
+    params = {"temperature": req.temperature, "num_ctx": req.num_ctx}
+    params.update(req.extra_params or {})
+    payload = {"model": req.name, "from": req.base, "parameters": params, "stream": False}
+    if req.system.strip():
+        payload["system"] = req.system.strip()
+    try:
+        r = requests.post("http://localhost:11434/api/create", json=payload, timeout=180)
+        ok = r.status_code == 200 and '"error"' not in (r.text or "")
+        return {"status": "success" if ok else "error", "modelfile": mf,
+                "detail": (r.text or "")[:600], "name": req.name}
+    except Exception as e:
+        return {"status": "error", "detail": str(e), "modelfile": mf, "name": req.name}
+
+@app.post("/ollama/delete")
+async def ollama_delete(request: OllamaPullRequest):
+    try:
+        r = requests.delete("http://localhost:11434/api/delete",
+                            json={"name": request.name}, timeout=15)
+        return {"status": "success" if r.status_code == 200 else "error", "detail": r.text[:200]}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
+# ═══════════════════════════════════════════════════════
+#  HF SPACES GPU — provision T4-small ($0.40/hr) w/ 5-min sleep
+#  For FLIP MODE jobs that need real GPU (training/quantization)
+# ═══════════════════════════════════════════════════════
+class SpaceHwReq(BaseModel):
+    repo_id: str
+    hardware: str = "t4-small"   # $0.40/hr
+    sleep_time: int = 300         # 5 minutes
+
+@app.get("/space/list")
+async def space_list():
+    """The user's own Spaces (for the GPU target picker)."""
+    try:
+        api = HfApi(token=HF_TOKEN)
+        me = whoami(token=HF_TOKEN)["name"]
+        spaces = api.list_spaces(author=me, limit=50)
+        return {"spaces": [{"id": s.id} for s in spaces]}
+    except Exception as e:
+        return {"spaces": [], "error": str(e)}
+
+@app.get("/space/runtime")
+async def space_runtime(repo_id: str):
+    try:
+        api = HfApi(token=HF_TOKEN)
+        rt = api.get_space_runtime(repo_id)
+        return {
+            "stage": getattr(rt, "stage", None),
+            "hardware": str(getattr(rt, "hardware", None)),
+            "requested_hardware": str(getattr(rt, "requested_hardware", None)),
+            "sleep_time": getattr(rt, "sleep_time", None),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/space/hardware")
+async def space_hardware(req: SpaceHwReq):
+    """Set a Space to T4-small with a 5-min sleep timer. Real HF API call."""
+    try:
+        api = HfApi(token=HF_TOKEN)
+        api.request_space_hardware(repo_id=req.repo_id, hardware=req.hardware)
+        api.set_space_sleep_time(repo_id=req.repo_id, sleep_time=req.sleep_time)
+        rt = api.get_space_runtime(req.repo_id)
+        return {"status": "success",
+                "hardware": str(getattr(rt, "requested_hardware", None) or getattr(rt, "hardware", None)),
+                "sleep_time": req.sleep_time, "stage": getattr(rt, "stage", None)}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+@app.post("/space/pause")
+async def space_pause(req: OllamaPullRequest):
+    """Pause a Space now (stops billing). Uses 'name' as repo_id."""
+    try:
+        api = HfApi(token=HF_TOKEN)
+        api.pause_space(req.name)
+        return {"status": "paused"}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
 @app.post("/voice/orchestrate")
 async def voice_orchestrate(
     audio: UploadFile = File(None), 
