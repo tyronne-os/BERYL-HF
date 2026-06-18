@@ -2378,6 +2378,154 @@ def deploy_space(payload: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# THE VANITY — Avatar direct chat + KREWE Portfolio (HF Dataset storage)
+# Portfolio repo: AIBRUH/beryl-krewe-portfolio  (private dataset)
+# Tables: squads.json (saved runs)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+PORTFOLIO_PROJECT = "krewe-portfolio"
+
+# Avatar persona per uniform — used for vanity-chat in-character replies
+_AVATAR_PERSONA: dict = {
+    "gala":      "You are a glamorous, witty award-show host named Gala. You are charming, warm, and eloquent. Keep replies under 2 sentences.",
+    "executive": "You are a sharp, decisive executive named Alexandria. You speak with authority and precision. Keep replies under 2 sentences.",
+    "scrubs":    "You are a compassionate, calm medical professional. You speak with care and clarity. Keep replies under 2 sentences.",
+    "academic":  "You are a brilliant, curious professor. You speak with intellectual depth and a touch of dry wit. Keep replies under 2 sentences.",
+    "justice":   "You are a composed, measured legal advocate. You choose your words with deliberate care. Keep replies under 2 sentences.",
+    "artist":    "You are a passionate, expressive creative. You speak with vivid imagery and emotional colour. Keep replies under 2 sentences.",
+    "captain":   "You are a confident, mission-focused leader. You speak with calm authority and directness. Keep replies under 2 sentences.",
+    "mechanic":  "You are a sharp-eyed, no-nonsense engineer. You speak plainly and get to the point. Keep replies under 2 sentences.",
+    "librarian": "You are a knowledgeable, precise archivist. You speak thoughtfully with a love of detail. Keep replies under 2 sentences.",
+    "scout":     "You are an energetic, curious field scout. You speak with enthusiasm and speed. Keep replies under 2 sentences.",
+    "archivist": "You are a methodical memory keeper. You speak with care for accuracy and context. Keep replies under 2 sentences.",
+    "conductor": "You are a masterful orchestrator of systems. You speak with clarity and grand vision. Keep replies under 2 sentences.",
+}
+
+class VanityChatRequest(BaseModel):
+    message: str
+    context: str = ""
+    uniform: str = "gala"
+
+@app.post("/krewe/vanity-chat")
+def krewe_vanity_chat(req: VanityChatRequest):
+    persona = _AVATAR_PERSONA.get(req.uniform, _AVATAR_PERSONA["gala"])
+    system = persona
+    user = f"[Context: {req.context[:300]}]\n\nThe viewer says to you: \"{req.message}\"\n\nReply in character, briefly."
+    try:
+        reply = _krewe_llm(DEFAULT_MODEL, system, user, temperature=0.75, max_tokens=120)
+        # strip any leading/trailing quotes the model might add
+        reply = reply.strip().strip('"')
+        return {"reply": reply}
+    except Exception as e:
+        return {"reply": "Forgive me — I seem to have lost my train of thought."}
+
+
+def _ensure_portfolio_repo():
+    repo_id = f"{_hf_username()}/beryl-{PORTFOLIO_PROJECT}"
+    try:
+        create_repo(repo_id=repo_id, repo_type="dataset", private=True,
+                    token=HF_TOKEN, exist_ok=True)
+        # seed squads table if missing
+        try:
+            hf_hub_download(repo_id=repo_id, filename="data/squads.json",
+                            repo_type="dataset", token=HF_TOKEN)
+        except Exception:
+            _write_table(repo_id, "squads", [])
+    except Exception:
+        pass
+    return repo_id
+
+
+def _generate_krewe_report(entry: dict) -> str:
+    squad = entry.get("squad", [])
+    health = entry.get("health", {})
+    prompt = entry.get("prompt", "")
+    output = entry.get("avatar_output", "")
+    doll_lines = "\n".join(
+        f"  • {d['name']} ({d['role']}): {d['model']} — {d.get('status','?')}"
+        + (f" [{d['latencyMs']}ms]" if d.get('latencyMs') else "")
+        for d in squad
+    )
+    system = (
+        "You are a technical reporting agent for the KREWE avatar pipeline builder. "
+        "Write a concise, structured markdown report based on the run data provided. "
+        "Use clear section headers. Be specific and actionable. Under 250 words."
+    )
+    user = (
+        f"Goal: {prompt}\n"
+        f"Health: {health.get('done',0)}/{health.get('total',0)} dolls passed "
+        f"({health.get('failed',0)} failed)\n"
+        f"Final avatar output: \"{output}\"\n"
+        f"Squad:\n{doll_lines}\n\n"
+        "Generate the report with sections: ## Overview, ## Pipeline Health, ## Output Assessment, ## Recommendations"
+    )
+    try:
+        return _krewe_llm(DEFAULT_MODEL, system, user, temperature=0.3, max_tokens=400)
+    except Exception:
+        return (
+            f"## KREWE Run Report\n\n"
+            f"**Health:** {health.get('done',0)}/{health.get('total',0)} dolls · "
+            f"{health.get('failed',0)} failed\n\n"
+            f"**Output:** \"{output}\"\n\n"
+            f"**Squad:** {', '.join(d['name'] for d in squad)}\n\n"
+            f"*(Full report unavailable — backend model offline)*"
+        )
+
+
+class PortfolioSaveRequest(BaseModel):
+    entry: dict
+
+@app.post("/krewe/portfolio/save")
+def krewe_portfolio_save(req: PortfolioSaveRequest):
+    try:
+        repo_id = _ensure_portfolio_repo()
+        entry = dict(req.entry)
+
+        # generate Gemma report
+        entry["report"] = _generate_krewe_report(entry)
+
+        # persist to HF
+        rows = _read_table(repo_id, "squads")
+        record = {
+            "id": str(uuid.uuid4()),
+            "created_at": datetime.datetime.utcnow().isoformat(),
+            **entry,
+        }
+        rows.insert(0, record)  # newest first
+        _write_table(repo_id, "squads", rows)
+        return {"entry": record}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/krewe/portfolio/list")
+def krewe_portfolio_list():
+    try:
+        repo_id = _ensure_portfolio_repo()
+        rows = _read_table(repo_id, "squads")
+        return {"entries": rows}
+    except Exception as e:
+        return {"entries": [], "error": str(e)}
+
+
+@app.delete("/krewe/portfolio/{entry_id}")
+def krewe_portfolio_delete(entry_id: str):
+    try:
+        repo_id = _ensure_portfolio_repo()
+        rows = _read_table(repo_id, "squads")
+        before = len(rows)
+        rows = [r for r in rows if str(r.get("id")) != entry_id]
+        if len(rows) == before:
+            raise HTTPException(status_code=404, detail="Entry not found")
+        _write_table(repo_id, "squads", rows)
+        return {"status": "deleted", "remaining": len(rows)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8001)
