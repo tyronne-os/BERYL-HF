@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Server, Download, Play, Cpu, Layers, HardDrive, Search, Terminal, ShieldCheck } from 'lucide-react';
+import {
+  Download, Play, Search, RefreshCw, HardDrive, Eye, Code2,
+  Wrench, Layers, Tag, ChevronRight, Zap, CheckCircle2,
+} from 'lucide-react';
 
 interface OllamaModel {
   name: string;
@@ -11,24 +14,92 @@ interface OllamaModel {
 
 interface OllamaMirrorProps {
   onSelectModel: (modelId: string) => void;
-  navigateTo: (page: 'chat' | 'trending' | 'spaces' | 'gpu' | 'cost' | 'studio' | 'cli' | 'docs' | 'compact' | 'ollama') => void;
+  navigateTo: (page: string) => void;
 }
 
+// ── Tag detection ────────────────────────────────────────────────────────────
+const TAGS: [RegExp, string, string][] = [
+  [/vision|vl|llava|bakllava/i, 'vision', 'bg-purple-500/15 text-purple-400 border-purple-500/25'],
+  [/coder|code|deepseek-coder|starcoder/i, 'code', 'bg-blue-500/15 text-blue-400 border-blue-500/25'],
+  [/embed|nomic|mxbai|bge/i, 'embedding', 'bg-teal-500/15 text-teal-400 border-teal-500/25'],
+  [/tool|function|hermes|mistral-nemo/i, 'tools', 'bg-orange-500/15 text-orange-400 border-orange-500/25'],
+  [/math|wizard|mathcoder/i, 'math', 'bg-yellow-500/15 text-yellow-400 border-yellow-500/25'],
+];
+function getTags(name: string) {
+  const found: { label: string; cls: string }[] = [];
+  for (const [re, label, cls] of TAGS) {
+    if (re.test(name)) found.push({ label, cls });
+  }
+  if (found.length === 0) found.push({ label: 'chat', cls: 'bg-slate-500/15 text-slate-400 border-slate-500/25' });
+  return found.slice(0, 2);
+}
+
+function fmtSize(bytes: number) {
+  const gb = bytes / 1024 ** 3;
+  return gb >= 1 ? gb.toFixed(1) + ' GB' : (bytes / 1024 ** 2).toFixed(0) + ' MB';
+}
+function fmtDate(iso: string) {
+  try {
+    return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch { return iso?.slice(0, 10) || '—'; }
+}
+
+// ── Model row (ollama.com list style) ────────────────────────────────────────
+const ModelRow: React.FC<{
+  model: OllamaModel;
+  onActivate: (name: string) => void;
+}> = ({ model, onActivate }) => {
+  const base = model.name.split(':')[0];
+  const tag = model.name.split(':')[1] || 'latest';
+  const tags = getTags(model.name);
+
+  return (
+    <div className="group flex items-center gap-4 px-5 py-4 border-b border-midnight-800/60 hover:bg-midnight-900/60 transition-colors">
+      {/* Model name */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-bold text-white text-[15px]">{base}</span>
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-midnight-800 text-slate-400 border border-midnight-700">{tag}</span>
+          {tags.map(t => (
+            <span key={t.label} className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${t.cls}`}>
+              {t.label}
+            </span>
+          ))}
+        </div>
+        <div className="flex items-center gap-4 mt-1 text-[11px] text-slate-500">
+          <span className="flex items-center gap-1"><HardDrive className="w-3 h-3" />{fmtSize(model.size)}</span>
+          <span>Updated {fmtDate(model.modified_at)}</span>
+          <span className="font-mono text-slate-600">{model.digest?.slice(7, 19) || '—'}</span>
+        </div>
+      </div>
+      {/* Activate */}
+      <button
+        onClick={() => onActivate(model.name)}
+        className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-midnight-800 hover:bg-emerald-600 border border-midnight-700 hover:border-emerald-500 text-slate-300 hover:text-white rounded-lg text-xs font-bold transition-all opacity-0 group-hover:opacity-100"
+      >
+        <Play className="w-3 h-3" /> Use
+      </button>
+    </div>
+  );
+};
+
+// ── Main OllamaMirror ────────────────────────────────────────────────────────
 const OllamaMirror: React.FC<OllamaMirrorProps> = ({ onSelectModel, navigateTo }) => {
   const [models, setModels] = useState<OllamaModel[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
   const [pullInput, setPullInput] = useState('');
   const [isPulling, setIsPulling] = useState(false);
-  const [pullStatus, setPullStatus] = useState<string | null>(null);
+  const [pullStatus, setPullStatus] = useState<{ text: string; ok: boolean } | null>(null);
+  const [daemonUp, setDaemonUp] = useState<boolean | null>(null);
 
   const fetchModels = async () => {
     try {
-      const response = await axios.get('http://127.0.0.1:8001/ollama/tags');
-      if (response.data && response.data.models) {
-        setModels(response.data.models);
-      }
-    } catch (err) {
-      console.error("Failed to fetch Ollama models", err);
+      const { data } = await axios.get('http://127.0.0.1:8001/ollama/tags');
+      setModels(data.models || []);
+      setDaemonUp(true);
+    } catch {
+      setDaemonUp(false);
     } finally {
       setLoading(false);
     }
@@ -36,209 +107,181 @@ const OllamaMirror: React.FC<OllamaMirrorProps> = ({ onSelectModel, navigateTo }
 
   useEffect(() => {
     fetchModels();
-    // Auto refresh every 10s to catch new pulls
-    const interval = setInterval(fetchModels, 10000);
-    return () => clearInterval(interval);
+    const t = setInterval(fetchModels, 10000);
+    return () => clearInterval(t);
   }, []);
 
   const handlePull = async () => {
     if (!pullInput.trim()) return;
     setIsPulling(true);
-    setPullStatus('Initializing pull sequence...');
+    setPullStatus(null);
     try {
       await axios.post('http://127.0.0.1:8001/ollama/pull', { name: pullInput.trim() });
-      setPullStatus(`Pulling ${pullInput.trim()} in the background...`);
+      setPullStatus({ text: `Pulling ${pullInput.trim()}… check back shortly.`, ok: true });
       setPullInput('');
-      // It will auto-refresh via the interval
-    } catch (err) {
-      console.error("Failed to pull model", err);
-      setPullStatus('Failed to initiate pull.');
+    } catch {
+      setPullStatus({ text: 'Pull failed. Is Ollama running on :11434?', ok: false });
     } finally {
-      setTimeout(() => {
-        setIsPulling(false);
-        setPullStatus(null);
-      }, 3000);
+      setIsPulling(false);
     }
   };
 
-  const formatSize = (bytes: number) => {
-    const gb = bytes / (1024 * 1024 * 1024);
-    return gb.toFixed(2) + ' GB';
-  };
-
-  const handleActivate = (modelName: string) => {
-    // We prepend 'ollama/' so the backend knows to route to local Ollama instead of HF
-    onSelectModel(`ollama/${modelName}`);
+  const handleActivate = (name: string) => {
+    onSelectModel(`ollama/${name}`);
     navigateTo('chat');
   };
 
+  const filtered = models.filter(m => m.name.toLowerCase().includes(search.toLowerCase()));
+
   return (
-    <div className="flex-1 bg-slate-950 text-slate-100 overflow-y-auto">
-      {/* Hero Section */}
-      <div className="relative border-b border-slate-800 bg-slate-900 overflow-hidden">
-        <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCI+CjxwYXRoIGQ9Ik0wIDBoNDB2NDBIMHoiIGZpbGw9InRyYW5zcGFyZW50Ii8+CjxwYXRoIGQ9Ik0wIDEwbDQwIDIwTTAgMzBsNDAtMjAiIHN0cm9rZT0iIzFmMjkzNyIvPgo8L3N2Zz4=')] opacity-30"></div>
-        <div className="absolute inset-0 bg-gradient-to-r from-emerald-900/40 to-slate-900 z-0"></div>
-        <div className="max-w-6xl mx-auto px-8 py-12 relative z-10 flex items-center justify-between">
+    <div className="flex-1 bg-[#0a0a0a] text-slate-100 overflow-y-auto">
+
+      {/* ── Hero ── */}
+      <div className="border-b border-[#1a1a1a] px-8 py-10">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-6 flex-wrap">
           <div>
-            <h1 className="text-4xl font-extrabold flex items-center space-x-3 text-white mb-2">
-              <Server className="w-10 h-10 text-emerald-400" />
-              <span>Ollama Local Engine</span>
-            </h1>
-            <p className="text-emerald-100/70 max-w-xl text-sm leading-relaxed">
-              Beryl HF natively integrates with your local Ollama daemon. Pull open-weight models, manage your localized VRAM footprint, and instantly switch your coding pipeline entirely off-grid.
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center">
+                <span className="text-xl">🦙</span>
+              </div>
+              <div>
+                <h1 className="text-2xl font-black text-white tracking-tight">Ollama</h1>
+                <p className="text-xs text-slate-500">Local AI, running on your machine</p>
+              </div>
+              <div className={`flex items-center gap-1.5 px-2 py-1 rounded-full border text-[10px] font-bold ml-2 ${
+                daemonUp === null ? 'border-slate-700 text-slate-500' :
+                daemonUp ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' :
+                'border-red-500/30 bg-red-500/10 text-red-400'
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${daemonUp ? 'bg-emerald-400 animate-pulse' : daemonUp === false ? 'bg-red-400' : 'bg-slate-500'}`} />
+                {daemonUp === null ? 'Checking…' : daemonUp ? 'Daemon up' : 'Daemon offline'}
+              </div>
+            </div>
+            <p className="text-slate-400 text-sm max-w-xl">
+              Get up and running with large language models locally. Pull any model from the Ollama library and use it instantly in BERYL's chat.
             </p>
           </div>
-          <div className="hidden md:flex items-center space-x-6">
-            <div className="text-center">
-              <div className="text-3xl font-black text-emerald-400 font-mono">{models.length}</div>
-              <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Local Models</div>
+          <div className="flex items-center gap-4 text-center">
+            <div>
+              <div className="text-3xl font-black text-white">{models.length}</div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-widest mt-0.5">Local Models</div>
             </div>
-            <div className="h-12 w-px bg-slate-700"></div>
-            <div className="text-center">
-              <div className="text-3xl font-black text-white flex items-center justify-center space-x-1"><ShieldCheck className="w-6 h-6 text-emerald-500" /></div>
-              <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">100% Private</div>
+            <div className="w-px h-10 bg-[#2a2a2a]" />
+            <div>
+              <div className="text-3xl font-black text-emerald-400">{(models.reduce((a, m) => a + m.size, 0) / 1024 ** 3).toFixed(1)}</div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-widest mt-0.5">GB on Disk</div>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto p-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* Left Column: Pull & Config */}
-        <div className="space-y-6">
-          <div className="bg-slate-900 rounded-2xl border border-emerald-500/30 p-6 shadow-[0_0_30px_rgba(16,185,129,0.05)] relative overflow-hidden group">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl -mr-10 -mt-10 transition-transform group-hover:scale-150 duration-700"></div>
-            <h2 className="text-lg font-bold text-white mb-4 flex items-center space-x-2">
-              <Download className="w-5 h-5 text-emerald-400" />
-              <span>Pull New Model</span>
-            </h2>
-            <div className="space-y-4 relative z-10">
-              <div>
-                <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-2">Model Tag (e.g., qwen2.5-coder:7b)</label>
-                <div className="relative">
-                  <Terminal className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500/50" />
-                  <input 
-                    type="text" 
-                    placeholder="llama3, mistral, phi3..."
-                    value={pullInput}
-                    onChange={(e) => setPullInput(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-4 py-3 text-sm text-emerald-50 focus:outline-none focus:border-emerald-500 transition-colors"
-                  />
-                </div>
-              </div>
-              <button 
-                onClick={handlePull}
-                disabled={isPulling || !pullInput.trim()}
-                className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl transition-all flex items-center justify-center space-x-2 shadow-lg shadow-emerald-900/20"
-              >
-                {isPulling ? <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div> : <Download className="w-4 h-4" />}
-                <span>{isPulling ? 'INITIATING...' : 'PULL FROM REGISTRY'}</span>
-              </button>
-              {pullStatus && (
-                <div className="text-[10px] font-mono text-emerald-400 bg-emerald-900/20 p-2 rounded border border-emerald-500/20 text-center">
-                  {pullStatus}
-                </div>
-              )}
-            </div>
-          </div>
+      <div className="max-w-5xl mx-auto px-8 py-8 space-y-8">
 
-          <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6">
-            <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center space-x-2">
-              <Cpu className="w-4 h-4" />
-              <span>Hardware Allocation</span>
-            </h2>
-            <div className="space-y-4">
-              <div>
-                <div className="flex justify-between text-xs mb-1">
-                  <span className="text-slate-300">VRAM Usage Target</span>
-                  <span className="text-emerald-400 font-bold font-mono">12.4 GB</span>
-                </div>
-                <div className="h-1.5 w-full bg-slate-950 rounded-full overflow-hidden border border-slate-800">
-                  <div className="h-full bg-emerald-500 w-[65%]"></div>
-                </div>
-              </div>
-              <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 text-xs text-slate-400 leading-relaxed">
-                Ollama automatically offloads layers to your GPU. Ensure your selected model fits within your physical VRAM to prevent severe latency drops during coding cycles.
-              </div>
+        {/* ── Pull box ── */}
+        <div className="bg-[#111] border border-[#222] rounded-2xl p-6">
+          <h2 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+            <Download className="w-4 h-4 text-emerald-400" /> Pull a model
+          </h2>
+          <div className="flex gap-3">
+            <div className="flex-1 relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-sm select-none">ollama run</span>
+              <input
+                type="text"
+                placeholder="llama3, qwen2.5-coder:7b, mistral…"
+                value={pullInput}
+                onChange={e => setPullInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handlePull()}
+                className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded-xl pl-[88px] pr-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500/50 font-mono placeholder-slate-600 transition-colors"
+              />
             </div>
+            <button
+              onClick={handlePull}
+              disabled={isPulling || !pullInput.trim()}
+              className="px-5 py-3 bg-white hover:bg-slate-100 disabled:bg-[#222] disabled:text-slate-500 text-black font-bold rounded-xl transition-all flex items-center gap-2 text-sm shrink-0"
+            >
+              {isPulling ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ChevronRight className="w-4 h-4" />}
+              Pull
+            </button>
+          </div>
+          {pullStatus && (
+            <div className={`mt-3 flex items-center gap-2 text-xs font-mono px-3 py-2 rounded-lg ${
+              pullStatus.ok ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'
+            }`}>
+              {pullStatus.ok ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> : <Zap className="w-3.5 h-3.5 shrink-0" />}
+              {pullStatus.text}
+            </div>
+          )}
+          <div className="mt-4 flex items-center gap-2 flex-wrap">
+            {['llama3.2', 'qwen2.5-coder:7b', 'mistral', 'phi4', 'gemma3:4b', 'nomic-embed-text'].map(s => (
+              <button key={s} onClick={() => setPullInput(s)}
+                className="text-[11px] px-2.5 py-1 bg-[#1a1a1a] hover:bg-[#222] border border-[#2a2a2a] rounded-full text-slate-400 hover:text-white transition-all font-mono">
+                {s}
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* Right Column: Model Grid */}
-        <div className="lg:col-span-2 space-y-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold flex items-center space-x-2">
-              <Layers className="w-5 h-5 text-slate-400" />
-              <span>Local Model Registry</span>
-            </h2>
-            <div className="relative w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-              <input 
-                type="text" 
-                placeholder="Search local models..."
-                className="w-full bg-slate-900 border border-slate-800 rounded-full pl-9 pr-4 py-1.5 text-xs focus:outline-none focus:border-slate-600 transition-colors"
-              />
+        {/* ── Capability legend ── */}
+        <div className="flex items-center gap-3 flex-wrap text-[10px]">
+          <span className="text-slate-600 font-bold uppercase tracking-widest">Capabilities:</span>
+          {[
+            { label: 'vision', Icon: Eye, cls: 'text-purple-400' },
+            { label: 'code', Icon: Code2, cls: 'text-blue-400' },
+            { label: 'embedding', Icon: Layers, cls: 'text-teal-400' },
+            { label: 'tools', Icon: Wrench, cls: 'text-orange-400' },
+            { label: 'chat', Icon: Tag, cls: 'text-slate-400' },
+          ].map(({ label, Icon, cls }) => (
+            <span key={label} className={`flex items-center gap-1 font-bold ${cls}`}>
+              <Icon className="w-3 h-3" />{label}
+            </span>
+          ))}
+        </div>
+
+        {/* ── Local registry ── */}
+        <div className="bg-[#111] border border-[#222] rounded-2xl overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-[#1a1a1a]">
+            <h2 className="font-bold text-white text-sm">Local Models</h2>
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+                <input
+                  type="text"
+                  placeholder="Filter…"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg pl-8 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-slate-500 w-44 placeholder-slate-600 transition-colors"
+                />
+              </div>
+              <button onClick={fetchModels} className="p-1.5 text-slate-500 hover:text-white hover:bg-[#222] rounded-lg transition-colors">
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
 
           {loading ? (
-            <div className="flex items-center justify-center h-64 border-2 border-dashed border-slate-800 rounded-3xl">
-              <div className="flex flex-col items-center space-y-3">
-                <div className="w-8 h-8 border-2 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin"></div>
-                <span className="text-xs text-slate-500 font-bold uppercase tracking-widest">Querying Daemon...</span>
-              </div>
+            <div className="flex items-center justify-center h-40 gap-3">
+              <div className="w-5 h-5 border-2 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin" />
+              <span className="text-xs text-slate-500 font-mono">Connecting to :11434…</span>
             </div>
-          ) : models.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-slate-800 rounded-3xl bg-slate-900/50 text-center px-6">
-              <HardDrive className="w-12 h-12 text-slate-600 mb-4" />
-              <h3 className="text-lg font-bold text-slate-300 mb-1">No Local Models Found</h3>
-              <p className="text-sm text-slate-500 max-w-md">Your Ollama registry is empty or the daemon isn't running on port 11434. Use the pull interface to download a model like <code>qwen2.5-coder:7b</code>.</p>
+          ) : daemonUp === false ? (
+            <div className="flex flex-col items-center justify-center h-48 text-center px-8 gap-3">
+              <span className="text-3xl">🦙</span>
+              <p className="text-slate-300 font-bold">Ollama daemon not found</p>
+              <p className="text-slate-500 text-sm">Install Ollama from <span className="text-emerald-400">ollama.com</span> and run it, then come back here.</p>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-48 text-center px-8 gap-3">
+              <HardDrive className="w-10 h-10 text-slate-600" />
+              <p className="text-slate-300 font-bold">{search ? 'No matches' : 'No local models'}</p>
+              <p className="text-slate-500 text-sm">{search ? 'Try a different search term.' : 'Pull a model above to get started.'}</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {models.map((model, idx) => (
-                <div key={idx} className="bg-slate-900 border border-slate-800 hover:border-emerald-500/50 rounded-2xl p-5 transition-all group flex flex-col">
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 to-slate-800 flex items-center justify-center border border-emerald-500/10">
-                        <Server className="w-5 h-5 text-emerald-400" />
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-white text-lg leading-tight truncate w-32" title={model.name}>
-                          {model.name.split(':')[0]}
-                        </h3>
-                        <span className="text-[10px] text-slate-500 font-mono font-bold bg-slate-950 px-1.5 py-0.5 rounded">
-                          {model.name.split(':')[1] || 'latest'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-2 mb-6">
-                    <div className="bg-slate-950 rounded-lg p-2 border border-slate-800/50">
-                      <span className="block text-[9px] text-slate-500 uppercase font-bold">Disk Footprint</span>
-                      <span className="text-sm font-bold text-slate-300 font-mono">{formatSize(model.size)}</span>
-                    </div>
-                    <div className="bg-slate-950 rounded-lg p-2 border border-slate-800/50">
-                      <span className="block text-[9px] text-slate-500 uppercase font-bold">Architecture</span>
-                      <span className="text-sm font-bold text-slate-300">GGUF Quant</span>
-                    </div>
-                  </div>
-
-                  <div className="mt-auto">
-                    <button 
-                      onClick={() => handleActivate(model.name)}
-                      className="w-full bg-slate-800 hover:bg-emerald-600 text-slate-300 hover:text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 group-hover:shadow-[0_0_15px_rgba(16,185,129,0.3)]"
-                    >
-                      <Play className="w-3 h-3" />
-                      <span>ACTIVATE FOR CODING</span>
-                    </button>
-                  </div>
-                </div>
-              ))}
+            <div>
+              {filtered.map((m, i) => <ModelRow key={i} model={m} onActivate={handleActivate} />)}
             </div>
           )}
         </div>
+
       </div>
     </div>
   );

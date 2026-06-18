@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Cpu, Activity, Server, Gauge, MemoryStick, Thermometer, Zap, ExternalLink, RefreshCw } from 'lucide-react';
+import { Cpu, Activity, Server, Gauge, MemoryStick, Thermometer, Zap, ExternalLink, RefreshCw, DollarSign } from 'lucide-react';
 import { API } from '../api';
+import CostTracker from './CostTracker';
 
 interface Stats { cpu_percent: number; cpu_count: number; ram_used_gb: number; ram_total_gb: number; ram_percent: number; node_mem_gb: number; py_mem_gb: number; }
 interface Gpu { name: string; mem_used_mb: number; mem_total_mb: number; mem_percent: number; util_percent: number; temp_c: number; power_w: number; }
@@ -37,7 +38,10 @@ const Ring: React.FC<{ pct: number; label: string; value: string; color: string 
   );
 };
 
+type Tab = 'compute' | 'billing';
+
 const GPUManager: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<Tab>('compute');
   const [stats, setStats] = useState<Stats | null>(null);
   const [gpu, setGpu] = useState<GpuResp | null>(null);
   const [spaces, setSpaces] = useState<{ items: SpaceItem[]; total: number } | null>(null);
@@ -54,8 +58,39 @@ const GPUManager: React.FC = () => {
     return () => clearInterval(t);
   }, []);
 
+  if (activeTab === 'billing') {
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex items-center gap-1 px-6 pt-4 pb-0 bg-slate-900 border-b border-slate-700 shrink-0">
+          <button onClick={() => setActiveTab('compute')}
+            className="px-4 py-2 text-sm font-bold rounded-t-lg border border-b-0 border-slate-700 text-slate-400 hover:text-white transition-colors">
+            <span className="flex items-center gap-2"><Cpu className="w-4 h-4" />COMPUTE</span>
+          </button>
+          <button onClick={() => setActiveTab('billing')}
+            className="px-4 py-2 text-sm font-bold rounded-t-lg border border-b-0 border-oldgold-500/50 bg-oldgold-500/10 text-oldgold-400 -mb-px">
+            <span className="flex items-center gap-2"><DollarSign className="w-4 h-4" />BILLING</span>
+          </button>
+        </div>
+        <CostTracker />
+      </div>
+    );
+  }
+
   return (
-    <div className="flex-1 bg-slate-900 text-slate-100 p-8 overflow-y-auto">
+    <div className="flex-1 bg-slate-900 text-slate-100 overflow-y-auto">
+      {/* Tab bar */}
+      <div className="flex items-center gap-1 px-6 pt-4 bg-slate-900 border-b border-slate-700">
+        <button onClick={() => setActiveTab('compute')}
+          className="px-4 py-2 text-sm font-bold rounded-t-lg border border-b-0 border-oldgold-500/50 bg-oldgold-500/10 text-oldgold-400 -mb-px">
+          <span className="flex items-center gap-2"><Cpu className="w-4 h-4" />COMPUTE</span>
+        </button>
+        <button onClick={() => setActiveTab('billing')}
+          className="px-4 py-2 text-sm font-bold rounded-t-lg border border-b-0 border-slate-700 text-slate-400 hover:text-white transition-colors">
+          <span className="flex items-center gap-2"><DollarSign className="w-4 h-4" />BILLING</span>
+        </button>
+      </div>
+
+      <div className="p-8">
       <div className="max-w-6xl mx-auto">
         <div className="flex items-center justify-between mb-8">
           <div>
@@ -173,6 +208,7 @@ const GPUManager: React.FC = () => {
             </a>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { BookOpen, Terminal, Cpu, Wand2, ArrowRight, Image as ImageIcon, CheckCircle, Zap, Shield, Rocket, Minimize2, FolderGit2, ShieldAlert, Server, Mic, Sparkles, Flame } from 'lucide-react';
 
 interface LivingDocProps {
-  navigateTo: (page: 'chat' | 'trending' | 'spaces' | 'gpu' | 'cost' | 'studio' | 'cli' | 'compact' | 'ollama') => void;
+  navigateTo: (page: string) => void;
 }
 
 const LivingDoc: React.FC<LivingDocProps> = ({ navigateTo }) => {
@@ -132,8 +132,8 @@ const LivingDoc: React.FC<LivingDocProps> = ({ navigateTo }) => {
           <div className="mt-8 p-6 bg-purple-900/20 border border-purple-500/30 rounded-xl">
             <h4 className="text-lg font-bold text-purple-400 mb-2 flex items-center"><Wand2 className="w-5 h-5 mr-2"/> Explore Trending Architectures</h4>
             <p className="text-sm text-slate-300 mb-4">Discover newly released weights on the Hugging Face Hub and instantly add them to your routing matrix.</p>
-            <button onClick={() => navigateTo('trending')} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center transition-colors">
-              Open Trending Hub <ArrowRight className="w-4 h-4 ml-2" />
+            <button onClick={() => navigateTo('hf')} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center transition-colors">
+              Open HF Hub <ArrowRight className="w-4 h-4 ml-2" />
             </button>
           </div>
         </div>

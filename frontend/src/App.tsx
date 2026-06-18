@@ -17,10 +17,8 @@ import ChatPane from './components/ChatPane';
 import CanvasPane from './components/CanvasPane';
 import ModelSelector from './components/ModelSelector';
 import AdminPanel from './components/AdminPanel';
-import TrendingPage from './components/TrendingPage';
-import SpacesPage from './components/SpacesPage';
+import HFPage from './components/HFPage';
 import GPUManager from './components/GPUManager';
-import CostTracker from './components/CostTracker';
 import ProjectManager from './components/ProjectManager';
 import AgentStudio from './components/AgentStudio';
 import CLIDashboard from './components/CLIDashboard';
@@ -32,7 +30,7 @@ import ComfyUIMirror from './components/ComfyUIMirror';
 import FlipMode from './components/FlipMode';
 import GenSherman from './components/GenSherman';
 import BottomNav from './components/BottomNav';
-import { Settings, Monitor, Zap, MessageSquare, TrendingUp, Globe, Cpu, DollarSign, Wand2, TerminalSquare, BookOpen, Minimize2, Server, FolderOpen, X, Sparkles } from 'lucide-react';
+import { Settings, Monitor, Zap, MessageSquare, Cpu, Wand2, TerminalSquare, BookOpen, Minimize2, Server, FolderOpen, X, Sparkles } from 'lucide-react';
 
 const App: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState('MiniMaxAI/MiniMax-M3');
@@ -42,7 +40,7 @@ const App: React.FC = () => {
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [isFileMenuOpen, setIsFileMenuOpen] = useState(false);
   const [isVoiceOpen, setIsVoiceOpen] = useState(true);
-  const [currentPage, setCurrentPage] = useState<'chat' | 'trending' | 'spaces' | 'gpu' | 'cost' | 'studio' | 'cli' | 'docs' | 'compact' | 'ollama' | 'comfy' | 'fliip' | 'sherman'>('chat');
+  const [currentPage, setCurrentPage] = useState<'chat' | 'hf' | 'gpu' | 'studio' | 'cli' | 'docs' | 'compact' | 'ollama' | 'comfy' | 'fliip' | 'sherman'>('chat');
 
   const handleAddModel = (modelId: string) => {
     const author = modelId.split('/')[0];
@@ -75,14 +73,10 @@ const App: React.FC = () => {
             </div>
           </main>
         );
-      case 'trending':
-        return <TrendingPage onAddModel={handleAddModel} />;
-      case 'spaces':
-        return <SpacesPage />;
+      case 'hf':
+        return <HFPage onAddModel={handleAddModel} />;
       case 'gpu':
         return <GPUManager />;
-      case 'cost':
-        return <CostTracker />;
       case 'compact':
         return <CompactHub />;
       case 'ollama':
@@ -133,12 +127,12 @@ const App: React.FC = () => {
             <MessageSquare className="w-3.5 h-3.5" />
             <span>CHAT</span>
           </button>
-          <button 
+          <button
             onClick={() => setCurrentPage('studio')}
             className={`nav-flash px-3 py-1 rounded-md text-[11px] font-bold transition-all flex items-center space-x-2 ${currentPage === 'studio' ? 'bg-oldgold-500 text-midnight-950 shadow-[0_0_15px_rgba(212,175,55,0.4)]' : 'text-slate-400 hover:text-oldgold-400 hover:bg-midnight-800'}`}
           >
             <Wand2 className="w-3.5 h-3.5" />
-            <span>STUDIO</span>
+            <span>AGENTS</span>
           </button>
           <button 
             onClick={() => setCurrentPage('cli')}
@@ -169,33 +163,19 @@ const App: React.FC = () => {
             <span>DOCS</span>
           </button>
           <div className="h-4 w-px bg-midnight-800 mx-1"></div>
-          <button 
-            onClick={() => setCurrentPage('trending')}
-            className={`nav-flash px-3 py-1 rounded-md text-[11px] font-bold transition-all flex items-center space-x-2 ${currentPage === 'trending' ? 'bg-oldgold-500 text-midnight-950 shadow-[0_0_15px_rgba(212,175,55,0.4)]' : 'text-slate-400 hover:text-oldgold-400 hover:bg-midnight-800'}`}
+          <button
+            onClick={() => setCurrentPage('hf')}
+            className={`nav-flash px-3 py-1 rounded-md text-[11px] font-bold transition-all flex items-center space-x-2 ${currentPage === 'hf' ? 'bg-oldgold-500 text-midnight-950 shadow-[0_0_15px_rgba(212,175,55,0.4)]' : 'text-slate-400 hover:text-oldgold-400 hover:bg-midnight-800'}`}
           >
-            <TrendingUp className="w-3.5 h-3.5" />
-            <span>TRENDING</span>
+            <span className="text-[13px]">🤗</span>
+            <span>HF</span>
           </button>
-          <button 
-            onClick={() => setCurrentPage('spaces')}
-            className={`nav-flash px-3 py-1 rounded-md text-[11px] font-bold transition-all flex items-center space-x-2 ${currentPage === 'spaces' ? 'bg-oldgold-500 text-midnight-950 shadow-[0_0_15px_rgba(212,175,55,0.4)]' : 'text-slate-400 hover:text-oldgold-400 hover:bg-midnight-800'}`}
-          >
-            <Globe className="w-3.5 h-3.5" />
-            <span>SPACES</span>
-          </button>
-          <button 
+          <button
             onClick={() => setCurrentPage('gpu')}
             className={`nav-flash px-3 py-1 rounded-md text-[11px] font-bold transition-all flex items-center space-x-2 ${currentPage === 'gpu' ? 'bg-oldgold-500 text-midnight-950 shadow-[0_0_15px_rgba(212,175,55,0.4)]' : 'text-slate-400 hover:text-oldgold-400 hover:bg-midnight-800'}`}
           >
             <Cpu className="w-3.5 h-3.5" />
             <span>GPU</span>
-          </button>
-          <button 
-            onClick={() => setCurrentPage('cost')}
-            className={`nav-flash px-3 py-1 rounded-md text-[11px] font-bold transition-all flex items-center space-x-2 ${currentPage === 'cost' ? 'bg-oldgold-500 text-midnight-950 shadow-[0_0_15px_rgba(212,175,55,0.4)]' : 'text-slate-400 hover:text-oldgold-400 hover:bg-midnight-800'}`}
-          >
-            <DollarSign className="w-3.5 h-3.5" />
-            <span>COST</span>
           </button>
         </nav>
 
