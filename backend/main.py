@@ -2090,6 +2090,126 @@ def krewe_plan(req: KrewePlanRequest):
                 "note": "Designed a starter squad — tweak any doll, then SQUAD UP."}
 
 
+# ── Per-step executor (used by frontend for real-time connectivity feedback) ──
+
+_KREWE_ERROR_SIGNALS = ["(engine error:", "(local model returned no output)", "(ollama returned"]
+
+class KreweStepRequest(BaseModel):
+    node: Dict[str, Any]
+    context: str
+    goal: str = ""
+
+@app.post("/krewe/step")
+def krewe_step(req: KreweStepRequest):
+    """Execute a single DOLL and return success/error + latency. Used by the
+    frontend to drive real-time neon connectivity indicators doll-by-doll."""
+    n = req.node
+    start = time.time()
+    user = (
+        f"{req.context}\n"
+        f"You are '{n.get('name')}' ({n.get('role')}). "
+        f"Tools available: {', '.join(n.get('tools', [])) or 'none'}.\n"
+        f"Process the squad payload and produce your contribution. Be concise."
+    )
+    try:
+        out = _krewe_llm(
+            n.get("model", DEFAULT_MODEL),
+            n.get("system", ""),
+            user,
+            float(n.get("temperature", 0.7)),
+        )
+        latency = int((time.time() - start) * 1000)
+        is_error = any(out.startswith(sig) for sig in _KREWE_ERROR_SIGNALS) or not out.strip()
+        return {
+            "status": "error" if is_error else "done",
+            "output": out,
+            "latency_ms": latency,
+            "error": out if is_error else None,
+            "model_used": n.get("model"),
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "output": "",
+            "latency_ms": int((time.time() - start) * 1000),
+            "error": str(exc),
+            "model_used": n.get("model"),
+        }
+
+
+# ── Role-based model suggestions ──────────────────────────────────────────────
+
+_KREWE_ROLE_MODELS: Dict[str, List[str]] = {
+    "Brain":          ["MiniMaxAI/MiniMax-M3", "Qwen/Qwen2.5-72B-Instruct", "ollama/llama3.2", "ollama/qwen2.5", "ollama/deepseek-r1"],
+    "Director":       ["MiniMaxAI/MiniMax-M3", "ollama/llama3.2", "Qwen/Qwen2.5-72B-Instruct", "ollama/mistral"],
+    "QA / Safety":    ["MiniMaxAI/MiniMax-M3", "ollama/llama3.2", "microsoft/Phi-3-mini-4k-instruct", "ollama/gemma2"],
+    "Voice / TTS":    ["ove-voice", "facebook/mms-tts-eng", "suno/bark-small", "hexgrad/Kokoro-82M"],
+    "GPU Engine":     ["hf-gpu", "AIBRUH/latentsync", "KwaiVGI/CHAMP"],
+    "Face / Visual":  ["comfyui", "stabilityai/stable-diffusion-xl-base-1.0", "black-forest-labs/FLUX.1-schnell"],
+    "Trigger / I/O":  ["trigger", "webhook", "cron"],
+    "Stream / Output":["edge-stream", "webrtc", "mjpeg"],
+    "Chain Executor": ["langchain-hf", "langchain-openai", "MiniMaxAI/MiniMax-M3"],
+    "Micro Agent":    ["smolagents", "ollama/mistral", "HuggingFaceH4/zephyr-7b-beta"],
+    "Context Store":  ["faiss", "chromadb", "ollama/nomic-embed-text"],
+    "Flow Router":    ["logic", "MiniMaxAI/MiniMax-M3"],
+}
+
+@app.get("/krewe/models")
+def krewe_models(role: str = "Brain"):
+    models = _KREWE_ROLE_MODELS.get(role, _KREWE_ROLE_MODELS["Brain"])
+    return {"role": role, "models": models}
+
+
+# ── AI-driven pipeline adjustments (swap model, fix errors, insert doll) ─────
+
+class KreweAdjustRequest(BaseModel):
+    message: str
+    nodes: List[Dict[str, Any]]
+    errors: List[Dict[str, Any]] = []
+
+@app.post("/krewe/adjust")
+def krewe_adjust(req: KreweAdjustRequest):
+    """Understand a natural-language adjustment command and return the specific
+    changes to apply to the pipeline (model swaps, explanations, etc.)."""
+    node_summary = "\n".join(
+        f"- {n.get('name')} ({n.get('role')}, model={n.get('model')}, status={n.get('status') or 'idle'}"
+        + (f", error={n.get('error', '')[:80]}" if n.get('error') else "") + ")"
+        for n in req.nodes
+    )
+    error_summary = "\n".join(
+        f"- {e.get('name')} failed with model={e.get('model')}: {str(e.get('error', ''))[:100]}"
+        for e in req.errors
+    ) if req.errors else "none"
+
+    system = (
+        "You are the KREWE Foreman adjusting an existing pipeline. "
+        "Analyze the current node states and the user's request. "
+        "Return ONLY valid JSON in this format:\n"
+        '{"swaps": [{"nodeId": "doll_X", "model": "new-model-id"}], '
+        '"note": "friendly explanation of what you changed and why"}\n'
+        "If no model swaps are needed (e.g. user just asks a question), return empty swaps array.\n"
+        f"Available role models: {json.dumps(_KREWE_ROLE_MODELS)}"
+    )
+    user = (
+        f"CURRENT PIPELINE:\n{node_summary}\n\n"
+        f"RECENT ERRORS:\n{error_summary}\n\n"
+        f"USER REQUEST: {req.message}\n\n"
+        "What should be changed?"
+    )
+    raw = _krewe_llm(DEFAULT_MODEL, system, user, temperature=0.3, max_tokens=500)
+    try:
+        m = re.search(r'\{[\s\S]*\}', raw)
+        result = json.loads(m.group(0)) if m else {}
+        swaps = result.get("swaps", [])
+        note = result.get("note", "Applied pipeline adjustments.")
+        # validate node IDs exist
+        valid_ids = {n.get("id") for n in req.nodes}
+        swaps = [s for s in swaps if isinstance(s, dict) and s.get("nodeId") in valid_ids and s.get("model")]
+        return {"swaps": swaps, "note": note}
+    except Exception:
+        return {"swaps": [], "note": "Use the model dropdown on failing dolls to swap their engines, then SQUAD UP."}
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # HF BACKEND — Private HuggingFace Dataset as Supabase-style database
 # Stores JSON tables inside AIBRUH/beryl-db-{project} private dataset repos
