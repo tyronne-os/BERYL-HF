@@ -1968,6 +1968,174 @@ def firewall_scan_surge():
     return {"surge_ips": surge_ips, "banned": newly_banned}
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# HF BACKEND — Private HuggingFace Dataset as Supabase-style database
+# Stores JSON tables inside AIBRUH/beryl-db-{project} private dataset repos
+# ═══════════════════════════════════════════════════════════════════════════════
+from huggingface_hub import hf_hub_download, upload_file as hf_upload_file
+
+def _hf_username():
+    return whoami(token=HF_TOKEN)["name"]
+
+def _repo_id(project: str) -> str:
+    uname = _hf_username()
+    return f"{uname}/beryl-db-{project}"
+
+def _table_path(table: str) -> str:
+    return f"data/{table}.json"
+
+def _read_table(repo_id: str, table: str) -> list:
+    try:
+        path = hf_hub_download(repo_id=repo_id, filename=_table_path(table),
+                               repo_type="dataset", token=HF_TOKEN)
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def _write_table(repo_id: str, table: str, rows: list):
+    content = json.dumps(rows, indent=2, ensure_ascii=False).encode("utf-8")
+    hf_upload_file(path_or_fileobj=BytesIO(content),
+                   path_in_repo=_table_path(table),
+                   repo_id=repo_id, repo_type="dataset", token=HF_TOKEN,
+                   commit_message=f"beryl: update {table}")
+
+class HFBackendInitRequest(BaseModel):
+    project: str
+
+class HFBackendTableRequest(BaseModel):
+    project: str
+    table: str
+    columns: list = []
+
+class HFBackendInsertRequest(BaseModel):
+    project: str
+    table: str
+    record: dict
+
+class HFBackendUpdateRequest(BaseModel):
+    project: str
+    table: str
+    id: str
+    updates: dict
+
+class HFBackendDeleteRequest(BaseModel):
+    project: str
+    table: str
+    id: str
+
+@app.post("/hf-backend/init")
+def hfb_init(req: HFBackendInitRequest):
+    repo_id = _repo_id(req.project)
+    try:
+        create_repo(repo_id=repo_id, repo_type="dataset", private=True, token=HF_TOKEN, exist_ok=True)
+        readme = f"# BERYL DB — {req.project}\n\nPrivate database managed by BERYL Builder. Do not edit manually.".encode()
+        hf_upload_file(path_or_fileobj=BytesIO(readme), path_in_repo="README.md",
+                       repo_id=repo_id, repo_type="dataset", token=HF_TOKEN,
+                       commit_message="beryl: init database")
+        return {"repo_id": repo_id, "status": "created"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/hf-backend/create-table")
+def hfb_create_table(req: HFBackendTableRequest):
+    repo_id = _repo_id(req.project)
+    try:
+        existing = _read_table(repo_id, req.table)
+        if existing:
+            return {"status": "exists", "rows": len(existing)}
+        _write_table(repo_id, req.table, [])
+        return {"status": "created", "table": req.table, "columns": req.columns}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/hf-backend/tables")
+def hfb_tables(project: str):
+    from huggingface_hub import list_repo_files
+    repo_id = _repo_id(project)
+    try:
+        files = list(list_repo_files(repo_id=repo_id, repo_type="dataset", token=HF_TOKEN))
+        tables = []
+        for f in files:
+            if f.startswith("data/") and f.endswith(".json"):
+                name = f.replace("data/", "").replace(".json", "")
+                rows = _read_table(repo_id, name)
+                cols = list(rows[0].keys()) if rows else []
+                tables.append({"name": name, "rows": len(rows), "columns": cols})
+        return {"tables": tables}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/hf-backend/rows")
+def hfb_rows(project: str, table: str):
+    repo_id = _repo_id(project)
+    try:
+        return {"rows": _read_table(repo_id, table)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/hf-backend/insert")
+def hfb_insert(req: HFBackendInsertRequest):
+    repo_id = _repo_id(req.project)
+    try:
+        rows = _read_table(repo_id, req.table)
+        record = {"id": str(uuid.uuid4()), "created_at": datetime.datetime.utcnow().isoformat(), **req.record}
+        rows.append(record)
+        _write_table(repo_id, req.table, rows)
+        return {"status": "inserted", "record": record}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/hf-backend/update")
+def hfb_update(req: HFBackendUpdateRequest):
+    repo_id = _repo_id(req.project)
+    try:
+        rows = _read_table(repo_id, req.table)
+        for i, row in enumerate(rows):
+            if str(row.get("id")) == req.id:
+                rows[i] = {**row, **req.updates, "updated_at": datetime.datetime.utcnow().isoformat()}
+                _write_table(repo_id, req.table, rows)
+                return {"status": "updated", "record": rows[i]}
+        raise HTTPException(status_code=404, detail="Record not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/hf-backend/delete")
+def hfb_delete(req: HFBackendDeleteRequest):
+    repo_id = _repo_id(req.project)
+    try:
+        rows = _read_table(repo_id, req.table)
+        before = len(rows)
+        rows = [r for r in rows if str(r.get("id")) != req.id]
+        if len(rows) == before:
+            raise HTTPException(status_code=404, detail="Record not found")
+        _write_table(repo_id, req.table, rows)
+        return {"status": "deleted", "remaining": len(rows)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/deploy-space")
+def deploy_space(payload: dict):
+    name = payload.get("name", "beryl-app")
+    html_content = payload.get("html", "")
+    uname = _hf_username()
+    repo_id = f"{uname}/{name}"
+    try:
+        create_repo(repo_id=repo_id, repo_type="space", space_sdk="static",
+                    private=False, token=HF_TOKEN, exist_ok=True)
+        hf_upload_file(path_or_fileobj=BytesIO(html_content.encode()),
+                       path_in_repo="index.html", repo_id=repo_id,
+                       repo_type="space", token=HF_TOKEN,
+                       commit_message="beryl: deploy")
+        return {"status": "deployed", "url": f"https://huggingface.co/spaces/{repo_id}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8001)

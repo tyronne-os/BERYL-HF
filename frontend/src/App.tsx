@@ -13,7 +13,7 @@ class ErrorBoundary extends Component<{children: React.ReactNode}, {error: Error
     return this.props.children;
   }
 }
-import ChatPane from './components/ChatPane';
+import BerylBuilder from './components/BerylBuilder';
 import CanvasPane from './components/CanvasPane';
 import ModelSelector from './components/ModelSelector';
 import AdminPanel from './components/AdminPanel';
@@ -29,7 +29,7 @@ import ComfyUIMirror from './components/ComfyUIMirror';
 import FlipMode from './components/FlipMode';
 import GenSherman from './components/GenSherman';
 import BottomNav from './components/BottomNav';
-import { Settings, Monitor, Zap, MessageSquare, Cpu, Wand2, TerminalSquare, BookOpen, FolderOpen, X, Sparkles } from 'lucide-react';
+import { Settings, Monitor, Zap, Cpu, Wand2, TerminalSquare, BookOpen, FolderOpen, X, Sparkles } from 'lucide-react';
 
 const App: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState('MiniMaxAI/MiniMax-M3');
@@ -56,13 +56,11 @@ const App: React.FC = () => {
         return (
           <main className="flex flex-1 overflow-hidden relative">
             {/* Command Rail (33%) */}
-            <div className="w-[33%] border-r border-slate-700 flex flex-col min-w-[320px] bg-slate-900 z-10">
-              <ChatPane 
-                model={selectedModel} 
+            <div className="w-[33%] border-r border-midnight-800 flex flex-col min-w-[320px] z-10">
+              <BerylBuilder
+                model={selectedModel}
                 isComputerUseEnabled={isComputerUseEnabled}
-                onArtifactCreated={(art) => {
-                  setCurrentArtifact(art);
-                }} 
+                onArtifactCreated={(art) => setCurrentArtifact(art)}
               />
             </div>
 
@@ -117,12 +115,12 @@ const App: React.FC = () => {
 
         {/* Global Nav Menu - Absolutely centered */}
         <nav className="absolute left-1/2 -translate-x-1/2 flex items-center bg-midnight-950/80 rounded-lg p-1 border border-midnight-800/50 backdrop-blur-sm">
-          <button 
+          <button
             onClick={() => setCurrentPage('chat')}
             className={`nav-flash px-3 py-1 rounded-md text-[11px] font-bold transition-all flex items-center space-x-2 ${currentPage === 'chat' ? 'bg-oldgold-500 text-midnight-950 shadow-[0_0_15px_rgba(212,175,55,0.4)]' : 'text-slate-400 hover:text-oldgold-400 hover:bg-midnight-800'}`}
           >
-            <MessageSquare className="w-3.5 h-3.5" />
-            <span>CHAT</span>
+            <Zap className="w-3.5 h-3.5" />
+            <span>BERYL</span>
           </button>
           <button
             onClick={() => setCurrentPage('studio')}
