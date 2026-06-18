@@ -206,10 +206,36 @@ async def update_key(request: KeyTestRequest):
 async def get_trending_models():
     try:
         api = HfApi(token=HF_TOKEN)
-        models = list(api.list_models(sort="downloads", limit=20))
-        return {
-            "text": [{"id": m.modelId, "author": getattr(m, 'author', m.modelId.split('/')[0] if '/' in m.modelId else m.modelId)} for m in models if m.modelId],
-        }
+        models = list(api.list_models(sort="downloads", limit=24, cardData=True))
+        result = []
+        for m in models:
+            if not m.modelId:
+                continue
+            author = getattr(m, 'author', m.modelId.split('/')[0] if '/' in m.modelId else m.modelId)
+            tags = [t for t in (getattr(m, 'tags', []) or []) if not t.startswith('arxiv:') and len(t) < 40][:8]
+            pipeline = getattr(m, 'pipeline_tag', None) or ''
+            downloads = getattr(m, 'downloads', 0) or 0
+            likes = getattr(m, 'likes', 0) or 0
+            # Extract short description from card_data if available
+            card = getattr(m, 'card_data', None)
+            description = ''
+            if card:
+                desc = getattr(card, 'text', None) or getattr(card, 'description', None) or ''
+                if desc:
+                    # Strip markdown and truncate
+                    import re as _re
+                    desc = _re.sub(r'[#*`\[\]>-]', '', str(desc)).strip()
+                    description = desc[:180].rstrip() + ('…' if len(desc) > 180 else '')
+            result.append({
+                "id": m.modelId,
+                "author": author,
+                "tags": tags,
+                "pipeline_tag": pipeline,
+                "downloads": downloads,
+                "likes": likes,
+                "description": description,
+            })
+        return {"text": result}
     except Exception as e:
         print(f"Error in get_trending_models: {e}")
         return {"text": []}
@@ -244,10 +270,31 @@ async def get_trending_gguf():
 async def get_trending_spaces():
     try:
         api = HfApi(token=HF_TOKEN)
-        spaces = api.list_spaces(sort="trending_score", limit=10)
-        return {
-            "spaces": [{"id": s.id, "author": s.author, "lastModified": s.lastModified} for s in spaces]
-        }
+        spaces = list(api.list_spaces(sort="trending_score", limit=20))
+        result = []
+        for s in spaces:
+            tags = [t for t in (getattr(s, 'tags', []) or []) if len(t) < 40][:6]
+            sdk = getattr(s, 'sdk', '') or ''
+            likes = getattr(s, 'likes', 0) or 0
+            # Try to get description from card data
+            card = getattr(s, 'card_data', None)
+            description = ''
+            if card:
+                import re as _re
+                desc = getattr(card, 'text', None) or getattr(card, 'description', None) or ''
+                if desc:
+                    desc = _re.sub(r'[#*`\[\]>-]', '', str(desc)).strip()
+                    description = desc[:160].rstrip() + ('…' if len(desc) > 160 else '')
+            result.append({
+                "id": s.id,
+                "author": s.author,
+                "lastModified": str(getattr(s, 'lastModified', '') or ''),
+                "sdk": sdk,
+                "tags": tags,
+                "likes": likes,
+                "description": description,
+            })
+        return {"spaces": result}
     except Exception as e:
         print(f"Error in get_trending_spaces: {e}")
         return {"spaces": []}
