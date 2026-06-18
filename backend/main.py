@@ -2,6 +2,10 @@ import os
 import json
 import base64
 import asyncio
+import threading
+import time
+import datetime
+import subprocess
 import pyautogui
 from PIL import Image
 from io import BytesIO
@@ -219,7 +223,6 @@ async def get_trending_spaces():
         print(f"Error in get_trending_spaces: {e}")
         return {"spaces": []}
 
-import subprocess
 import requests
 from fastapi import UploadFile, File, Form
 import tempfile
@@ -1105,6 +1108,227 @@ async def network_snapshot():
         return {"connections": conns or [], "count": len(conns or [])}
     except Exception as e:
         return {"connections": [], "count": 0, "error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════
+#  GEN SHERMAN — 24/7 BACKGROUND DAEMON
+#  Posture check every 30s, full sweep every 5 min,
+#  Windows balloon notifications on HIGH/CRITICAL,
+#  persistent log to sherman_log.jsonl
+# ═══════════════════════════════════════════════════════
+
+_SHERMAN_LOG_PATH = os.path.join(os.path.dirname(__file__), "sherman_log.jsonl")
+_SHERMAN_MAX_LOG  = 500
+
+_daemon_state: dict = {
+    "running":            False,
+    "last_posture":       None,
+    "last_sweep":         None,
+    "threat_level":       "UNKNOWN",
+    "total_threats_seen": 0,
+    "auto_kill":          False,
+    "sweep_interval":     300,   # seconds between full sweeps
+    "posture_interval":   30,    # seconds between posture polls
+    "log":                [],    # last 100 entries in-memory
+}
+
+# Windows balloon notification (no extra deps — uses WinForms via PowerShell)
+_CREATE_NO_WINDOW = 0x08000000
+
+def _notify_windows(title: str, body: str, level: str = "WARNING") -> None:
+    icon = {"WARNING": "Warning", "ERROR": "Error", "INFO": "Info"}.get(level, "Warning")
+    t = title.replace("'", "''")[:80]
+    b = body.replace("'", "''").replace("\n", " ")[:200]
+    ps = (
+        "Add-Type -Assembly System.Windows.Forms,System.Drawing;"
+        "$n=[System.Windows.Forms.NotifyIcon]::new();"
+        f"$n.Icon=[System.Drawing.SystemIcons]::{icon};"
+        "$n.Visible=$true;"
+        f"$n.ShowBalloonTip(9000,'{t}','{b}',[System.Windows.Forms.ToolTipIcon]::{icon});"
+        "Start-Sleep -Seconds 10;$n.Dispose()"
+    )
+    try:
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps],
+            creationflags=_CREATE_NO_WINDOW, close_fds=True
+        )
+    except Exception:
+        pass
+
+def _daemon_append_log(level: str, msg: str) -> None:
+    entry = {
+        "ts":    datetime.datetime.now().isoformat(timespec="seconds"),
+        "level": level,
+        "msg":   msg,
+    }
+    _daemon_state["log"] = ([entry] + _daemon_state["log"])[:100]
+    try:
+        with open(_SHERMAN_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+        # Trim file to _SHERMAN_MAX_LOG lines
+        with open(_SHERMAN_LOG_PATH, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        if len(lines) > _SHERMAN_MAX_LOG:
+            with open(_SHERMAN_LOG_PATH, "w", encoding="utf-8") as f:
+                f.writelines(lines[-_SHERMAN_MAX_LOG:])
+    except Exception:
+        pass
+
+def _daemon_posture() -> tuple:
+    """Fast posture check — returns (threat_level, counts_dict)."""
+    import psutil
+    established = listeners = rat_listeners = headless = temp_execs = 0
+    try:
+        for c in psutil.net_connections(kind="inet"):
+            if c.status == "ESTABLISHED":
+                established += 1
+            elif c.status == "LISTEN":
+                listeners += 1
+                port = c.laddr.port if c.laddr else 0
+                if port in _RAT_PORTS:
+                    rat_listeners += 1
+    except Exception:
+        pass
+    try:
+        for p in psutil.process_iter(["name", "exe", "cmdline"]):
+            try:
+                name = (p.info["name"] or "").lower()
+                if any(b in name for b in ["chrome", "msedge", "brave", "chromium"]):
+                    cl = " ".join(p.info.get("cmdline") or []).lower()
+                    if "--headless" in cl or "--remote-debugging-port" in cl:
+                        headless += 1
+                exe = (p.info.get("exe") or "").lower()
+                if exe and ("\\temp\\" in exe or "\\appdata\\roaming\\" in exe) and any(s in name for s in ["powershell", "cmd"]):
+                    temp_execs += 1
+            except Exception:
+                continue
+    except Exception:
+        pass
+    lvl = (
+        "CRITICAL" if rat_listeners > 0 else
+        "HIGH"     if headless > 0      else
+        "ELEVATED" if temp_execs > 0    else
+        "NOMINAL"
+    )
+    return lvl, {
+        "established": established, "listeners": listeners,
+        "rat_listeners": rat_listeners, "headless": headless,
+        "temp_execs": temp_execs,
+    }
+
+def _sherman_daemon_worker() -> None:
+    """Background thread — runs forever while the backend is alive."""
+    _daemon_state["running"] = True
+    _daemon_append_log("INFO", "GEN SHERMAN daemon started — 24/7 protection active")
+    _notify_windows("GEN SHERMAN ONLINE", "24/7 background protection active for BERYL HF & Windows 11", "INFO")
+
+    last_full_sweep = 0.0
+    prev_level = "NOMINAL"
+
+    while True:
+        try:
+            now = time.time()
+            level, counts = _daemon_posture()
+            _daemon_state["last_posture"] = datetime.datetime.now().isoformat(timespec="seconds")
+            _daemon_state["threat_level"] = level
+
+            if level != prev_level:
+                _daemon_append_log(level, f"Threat level: {prev_level} → {level} | {counts}")
+                if level in ("CRITICAL", "HIGH"):
+                    _notify_windows(
+                        f"GEN SHERMAN — {level} THREAT",
+                        f"RAT ports:{counts['rat_listeners']} Headless:{counts['headless']} "
+                        f"TempExec:{counts['temp_execs']} — Open BERYL HF GEN SHERMAN",
+                        "WARNING",
+                    )
+                elif prev_level in ("CRITICAL", "HIGH"):
+                    _notify_windows("GEN SHERMAN — THREAT CLEARED", f"System returned to {level}", "INFO")
+                prev_level = level
+
+            # Full sweep on schedule
+            if (now - last_full_sweep) >= _daemon_state["sweep_interval"]:
+                _daemon_append_log("INFO", "Full sweep initiated (scheduled)")
+                try:
+                    resp = requests.get("http://127.0.0.1:8001/security/sweep", timeout=90)
+                    if resp.ok:
+                        threats = resp.json()
+                        total = sum(
+                            len(v) for k, v in threats.items()
+                            if isinstance(v, list) and not k.startswith("_")
+                        )
+                        crit = sum(
+                            1 for v in threats.values()
+                            if isinstance(v, list)
+                            for it in v
+                            if isinstance(it, dict) and it.get("risk") == "CRITICAL"
+                        )
+                        _daemon_state["total_threats_seen"] += total
+                        _daemon_state["last_sweep"] = datetime.datetime.now().isoformat(timespec="seconds")
+                        if total > 0:
+                            _daemon_append_log("THREAT", f"Sweep: {total} threats ({crit} critical)")
+                            if crit > 0:
+                                _notify_windows(
+                                    "GEN SHERMAN — CRITICAL SWEEP RESULT",
+                                    f"{total} threats found, {crit} CRITICAL. Review in BERYL HF → GEN SHERMAN.",
+                                    "ERROR",
+                                )
+                            if _daemon_state["auto_kill"]:
+                                for cat_items in threats.values():
+                                    if not isinstance(cat_items, list):
+                                        continue
+                                    for it in cat_items:
+                                        if isinstance(it, dict) and it.get("risk") == "CRITICAL" and it.get("pid"):
+                                            try:
+                                                subprocess.run(
+                                                    ["taskkill", "/F", "/PID", str(it["pid"])],
+                                                    timeout=5, capture_output=True,
+                                                    creationflags=_CREATE_NO_WINDOW,
+                                                )
+                                                _daemon_append_log(
+                                                    "KILL",
+                                                    f"Auto-killed PID {it['pid']} ({it.get('name','?')}) — CRITICAL",
+                                                )
+                                            except Exception:
+                                                pass
+                        else:
+                            _daemon_append_log("CLEAR", "Full sweep complete — system clean")
+                except Exception as ex:
+                    _daemon_append_log("ERROR", f"Sweep error: {ex}")
+                last_full_sweep = now
+
+        except Exception as ex:
+            _daemon_append_log("ERROR", f"Daemon loop error: {ex}")
+
+        time.sleep(_daemon_state["posture_interval"])
+
+
+@app.on_event("startup")
+async def start_sherman_daemon() -> None:
+    t = threading.Thread(target=_sherman_daemon_worker, daemon=True, name="gen-sherman")
+    t.start()
+
+
+@app.get("/security/daemon/status")
+async def daemon_status():
+    return {k: v for k, v in _daemon_state.items() if k != "log"}
+
+
+@app.get("/security/daemon/logs")
+async def daemon_logs(limit: int = 50):
+    return {"logs": _daemon_state["log"][:limit]}
+
+
+class DaemonConfig(BaseModel):
+    auto_kill:       Optional[bool] = None
+    sweep_interval:  Optional[int]  = None
+
+@app.post("/security/daemon/config")
+async def update_daemon_config(cfg: DaemonConfig):
+    if cfg.auto_kill is not None:
+        _daemon_state["auto_kill"] = cfg.auto_kill
+    if cfg.sweep_interval is not None:
+        _daemon_state["sweep_interval"] = max(60, cfg.sweep_interval)
+    return {"status": "ok", "config": {k: v for k, v in _daemon_state.items() if k != "log"}}
 
 
 # ═══════════════════════════════════════════════════════

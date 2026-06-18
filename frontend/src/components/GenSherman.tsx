@@ -5,7 +5,7 @@ import {
   AlertTriangle, CheckCircle2, Clock, Activity, Zap,
   Search, XCircle, Crosshair, Skull, Wifi, Terminal,
   MonitorX, Bomb, Bug, ScanSearch, RefreshCw, ToggleLeft, ToggleRight,
-  Brain, FileText,
+  Brain, FileText, Server, List,
 } from 'lucide-react';
 import { API } from '../api';
 
@@ -14,13 +14,26 @@ interface Posture {
   suspicious_ports: number[]; total_procs: number; browser_procs: number; headless: number; temp_execs: number;
 }
 
+interface DaemonStatus {
+  running: boolean;
+  threat_level: string;
+  last_posture: string | null;
+  last_sweep: string | null;
+  total_threats_seen: number;
+  auto_kill: boolean;
+  sweep_interval: number;
+  posture_interval: number;
+}
+
+interface DaemonLogEntry { ts: string; level: string; msg: string; }
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type AgentName    = 'SENTINEL' | 'GUARD' | 'JAILER' | 'WARDEN';
 type EventSev     = 'BLOCKED' | 'INTERCEPTED' | 'SANITIZED' | 'QUARANTINED'
                   | 'DETECTED' | 'CLEARED' | 'FLAGGED' | 'LOCKED' | 'SEALED';
 type ThreatLevel  = 'NOMINAL' | 'ELEVATED' | 'HIGH' | 'CRITICAL';
-type Mode         = 'watch' | 'sweep';
+type Mode         = 'watch' | 'sweep' | 'daemon';
 type SweepPhase   = 'idle' | 'scanning' | 'done';
 type LogType      = 'info' | 'scan' | 'threat' | 'clear' | 'kill' | 'terminated' | 'error';
 
@@ -176,6 +189,40 @@ const GenSherman: React.FC = () => {
   const addSweepLog = (msg: string, type: LogType = 'info') =>
     setSweepLog(prev => [{ ts: stamp(), msg, type }, ...prev].slice(0, 60));
 
+  // ── Daemon state ──────────────────────────────────────────────────────────
+  const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
+  const [daemonLogs, setDaemonLogs]     = useState<DaemonLogEntry[]>([]);
+  const [daemonAutoKill, setDaemonAutoKill] = useState(false);
+  const [daemonSweepMin, setDaemonSweepMin] = useState(5);
+
+  const fetchDaemon = async () => {
+    try {
+      const [{ data: st }, { data: lg }] = await Promise.all([
+        axios.get(`${API}/security/daemon/status`),
+        axios.get(`${API}/security/daemon/logs?limit=80`),
+      ]);
+      setDaemonStatus(st);
+      setDaemonLogs(lg.logs || []);
+      setDaemonAutoKill(st.auto_kill);
+      setDaemonSweepMin(Math.round(st.sweep_interval / 60));
+    } catch { /* backend warming */ }
+  };
+
+  const saveDaemonConfig = async (auto_kill: boolean, sweep_min: number) => {
+    try {
+      await axios.post(`${API}/security/daemon/config`, {
+        auto_kill,
+        sweep_interval: sweep_min * 60,
+      });
+    } catch { /* ignore */ }
+  };
+
+  useEffect(() => {
+    fetchDaemon();
+    const t = setInterval(fetchDaemon, 5000);
+    return () => clearInterval(t);
+  }, []);
+
   // ── Uptime ticker ─────────────────────────────────────────────────────────
   useEffect(() => {
     const t = setInterval(() => setUptime(u => u + 1), 1000);
@@ -324,6 +371,139 @@ const GenSherman: React.FC = () => {
       addSweepLog('Nuke failed — backend unreachable', 'error');
     }
   };
+
+  // ── Daemon log color ─────────────────────────────────────────────────────
+  const DAEMON_LOG_COLOR: Record<string, string> = {
+    INFO:    'text-slate-400',
+    NOMINAL: 'text-green-400',
+    ELEVATED:'text-yellow-400',
+    HIGH:    'text-orange-400',
+    CRITICAL:'text-red-400',
+    THREAT:  'text-red-400',
+    CLEAR:   'text-green-300',
+    KILL:    'text-orange-300',
+    ERROR:   'text-rose-400',
+  };
+
+  const renderDaemon = () => (
+    <div className="flex flex-1 overflow-hidden">
+      {/* Left: status cards + config */}
+      <div className="flex-1 overflow-y-auto p-5 space-y-5">
+        {/* Status cards row */}
+        <div className="grid grid-cols-4 gap-3">
+          {[
+            { label: 'STATUS',          val: daemonStatus?.running ? 'ONLINE' : 'OFFLINE', color: daemonStatus?.running ? 'text-green-400' : 'text-red-400' },
+            { label: 'THREAT LEVEL',    val: daemonStatus?.threat_level ?? '—',            color: daemonStatus?.threat_level === 'CRITICAL' ? 'text-red-400 animate-pulse' : daemonStatus?.threat_level === 'HIGH' ? 'text-orange-400' : daemonStatus?.threat_level === 'ELEVATED' ? 'text-yellow-400' : 'text-green-400' },
+            { label: 'THREATS LOGGED',  val: String(daemonStatus?.total_threats_seen ?? 0), color: 'text-slate-200' },
+            { label: 'SWEEP EVERY',     val: daemonStatus ? `${Math.round(daemonStatus.sweep_interval/60)} min` : '—', color: 'text-purple-400' },
+          ].map(c => (
+            <div key={c.label} className="bg-midnight-800 border border-midnight-700 rounded-xl p-3 text-center">
+              <p className="text-[8px] text-slate-600 uppercase tracking-widest font-bold mb-1">{c.label}</p>
+              <p className={`text-sm font-black font-mono ${c.color}`}>{c.val}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Last seen times */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-midnight-800 border border-midnight-700 rounded-xl p-3">
+            <p className="text-[8px] text-slate-600 uppercase tracking-widest font-bold mb-1">Last Posture Check</p>
+            <p className="text-[10px] font-mono text-slate-300">{daemonStatus?.last_posture ?? 'Not yet'}</p>
+          </div>
+          <div className="bg-midnight-800 border border-midnight-700 rounded-xl p-3">
+            <p className="text-[8px] text-slate-600 uppercase tracking-widest font-bold mb-1">Last Full Sweep</p>
+            <p className="text-[10px] font-mono text-slate-300">{daemonStatus?.last_sweep ?? 'Not yet'}</p>
+          </div>
+        </div>
+
+        {/* Config */}
+        <div className="bg-midnight-800 border border-midnight-700 rounded-xl p-4">
+          <p className="text-[9px] font-black text-oldgold-400 uppercase tracking-[0.2em] mb-3">Daemon Config</p>
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <p className="text-[10px] font-bold text-slate-300">Auto-Kill Critical Threats</p>
+              <p className="text-[8px] text-slate-600">Automatically terminate CRITICAL-flagged PIDs</p>
+            </div>
+            <button
+              onClick={async () => {
+                const next = !daemonAutoKill;
+                setDaemonAutoKill(next);
+                await saveDaemonConfig(next, daemonSweepMin);
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[9px] font-bold border transition-all ${
+                daemonAutoKill ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'bg-midnight-900 border-midnight-700 text-slate-500'
+              }`}
+            >
+              {daemonAutoKill ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+              {daemonAutoKill ? 'ON' : 'OFF'}
+            </button>
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[10px] font-bold text-slate-300">Full Sweep Interval</p>
+              <p className="text-[8px] text-slate-600">How often the daemon runs a full deep scan</p>
+            </div>
+            <div className="flex items-center gap-2">
+              {[2, 5, 10, 30].map(m => (
+                <button
+                  key={m}
+                  onClick={async () => {
+                    setDaemonSweepMin(m);
+                    await saveDaemonConfig(daemonAutoKill, m);
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-[9px] font-black border transition-all ${
+                    daemonSweepMin === m
+                      ? 'bg-purple-500/20 border-purple-500/40 text-purple-400'
+                      : 'bg-midnight-900 border-midnight-700 text-slate-500 hover:text-slate-300'
+                  }`}
+                >{m}m</button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Startup instructions */}
+        <div className="bg-purple-500/5 border border-purple-500/20 rounded-xl p-4">
+          <p className="text-[9px] font-black text-purple-400 uppercase tracking-[0.2em] mb-2 flex items-center gap-2">
+            <Server className="w-3.5 h-3.5" /> Auto-Start on Windows Login
+          </p>
+          <p className="text-[10px] text-slate-400 mb-2">Run this once in PowerShell (as Admin) to register GEN SHERMAN as a startup task:</p>
+          <div className="bg-midnight-950 rounded-lg px-3 py-2 font-mono text-[10px] text-green-400 border border-midnight-700">
+            powershell -ExecutionPolicy Bypass -File deploy_sherman.ps1
+          </div>
+          <p className="text-[9px] text-slate-600 mt-2">Located in your BERYL-HF root folder. Registers a Task Scheduler job that starts the backend silently on every login.</p>
+        </div>
+      </div>
+
+      {/* Right: daemon log */}
+      <div className="w-80 shrink-0 border-l border-midnight-800 flex flex-col bg-midnight-900/30">
+        <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-midnight-800 bg-midnight-900/60">
+          <List className="w-3.5 h-3.5 text-purple-400" />
+          <span className="text-[9px] font-black text-purple-400 uppercase tracking-[0.2em]">Daemon Threat Log</span>
+          <span className="ml-auto text-[8px] font-mono text-slate-600">{daemonLogs.length} entries</span>
+          <button onClick={fetchDaemon} className="text-slate-600 hover:text-slate-400 transition-colors">
+            <RefreshCw className="w-3 h-3" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto py-2 px-1">
+          {daemonLogs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-32 text-slate-700">
+              <Server className="w-6 h-6 mb-2" />
+              <p className="text-[9px] text-center">Daemon not running</p>
+            </div>
+          ) : daemonLogs.map((entry, i) => (
+            <div key={i} className="flex flex-col gap-0.5 px-3 py-1.5 hover:bg-midnight-800/30 rounded mx-1 mb-0.5">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[7.5px] text-slate-700 shrink-0 tabular-nums">{entry.ts}</span>
+                <span className={`text-[8px] font-black shrink-0 ${DAEMON_LOG_COLOR[entry.level] || 'text-slate-400'}`}>{entry.level}</span>
+              </div>
+              <p className="text-[8.5px] font-mono text-slate-400 leading-tight pl-1">{entry.msg}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 
   // ─── Sub-components ───────────────────────────────────────────────────────
 
@@ -697,6 +877,21 @@ const GenSherman: React.FC = () => {
                 </span>
               )}
             </button>
+            <button
+              onClick={() => setMode('daemon')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer ${
+                mode === 'daemon' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'text-slate-600 hover:text-slate-400'
+              }`}
+            >
+              <Server className="w-3 h-3" />
+              DAEMON
+              {daemonStatus?.running && (
+                <span className="relative flex h-1.5 w-1.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75" />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-purple-500" />
+                </span>
+              )}
+            </button>
           </div>
 
           <div className="h-8 w-px bg-midnight-800" />
@@ -707,6 +902,19 @@ const GenSherman: React.FC = () => {
             <div>THREATS BLOCKED <span className="font-mono text-red-400 ml-1">{totalBlocked.toLocaleString()}</span></div>
             {mode === 'sweep' && lastScanTime && (
               <div>LAST SWEEP <span className="font-mono text-oldgold-400 ml-1">{lastScanTime}</span></div>
+            )}
+          </div>
+
+          {/* Daemon pill */}
+          <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[8px] font-black uppercase tracking-widest ${
+            daemonStatus?.running
+              ? 'bg-purple-500/10 border-purple-500/30 text-purple-400'
+              : 'bg-slate-800 border-slate-700 text-slate-600'
+          }`}>
+            <Server className="w-3 h-3" />
+            {daemonStatus?.running ? '24/7 ACTIVE' : 'DAEMON OFF'}
+            {daemonStatus?.running && (
+              <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
             )}
           </div>
 
@@ -740,7 +948,7 @@ const GenSherman: React.FC = () => {
       </div>
 
       {/* ── Body: WATCH or SWEEP ── */}
-      {mode === 'watch' ? (
+      {mode === 'daemon' ? renderDaemon() : mode === 'watch' ? (
         <div className="flex flex-1 overflow-hidden">
           {/* 2×2 Agent Grid */}
           <div className="flex-1 flex flex-col overflow-hidden">
