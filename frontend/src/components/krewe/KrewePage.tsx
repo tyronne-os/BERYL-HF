@@ -9,7 +9,7 @@ import '@xyflow/react/dist/style.css';
 import {
   Play, Sparkles, Trash2, Plus, Send, X, Cpu, Brain,
   Wrench, Layers, Users, Loader2, Bot,
-  HeartPulse, Wand2, BookmarkPlus,
+  HeartPulse, Wand2, BookmarkPlus, Grid3x3, Factory,
 } from 'lucide-react';
 import DollNode, { UNIFORMS } from './DollNode';
 import type { DollData, DollNodeType } from './DollNode';
@@ -18,6 +18,9 @@ import type { EdgeStatus } from './FlowEdge';
 import TheVanity from './TheVanity';
 import VanityGallery, { ReportOverlay } from './VanityGallery';
 import type { PortfolioEntry } from './VanityGallery';
+import AssemblyLine from './AssemblyLine';
+import GalleryView from './GalleryView';
+import type { AssemblyEntry, AssemblyStats } from './types';
 import { KREWE_ROSTER, rosterToData, AVATAR_PIPELINE } from './roster';
 import type { RosterEntry } from './roster';
 import { API } from '../../api';
@@ -78,8 +81,10 @@ function KreweCanvas() {
   const [configTarget, setConfigTarget] = useState<{ id: string; section: 'head' | 'torso' | 'purse' } | null>(null);
   const [running, setRunning] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [leftTab, setLeftTab] = useState<'build' | 'roster'>('build');
+  const [leftTab, setLeftTab] = useState<'build' | 'roster' | 'assembly'>('build');
   const [rosterCat, setRosterCat] = useState<'avatar' | 'ai-infra' | 'all'>('all');
+  const [showGallery, setShowGallery] = useState(false);
+  const [assemblyStats, setAssemblyStats] = useState<AssemblyStats | null>(null);
 
   // chat
   const [chat, setChat] = useState<ChatMsg[]>([{
@@ -228,6 +233,15 @@ function KreweCanvas() {
     }
     setSaving(false);
   }, [saving, avatar, nodes, lastGoal, lastHealth]);
+
+  const addAssemblyEntry = useCallback((entry: AssemblyEntry) => {
+    setPortfolio((p) => {
+      const asPortfolio = entry as unknown as PortfolioEntry;
+      const updated = [asPortfolio, ...p];
+      localStorage.setItem('krewe-portfolio', JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
 
   const deletePortfolioEntry = useCallback((id: string) => {
     setPortfolio((p) => {
@@ -591,13 +605,19 @@ function KreweCanvas() {
       {/* ── LEFT RAIL ──────────────────────────────────────────────────────── */}
       <div className="w-[300px] shrink-0 border-r border-midnight-800 flex flex-col bg-midnight-900">
         <div className="flex border-b border-midnight-800">
-          {(['build', 'roster'] as const).map((t) => (
-            <button key={t} onClick={() => setLeftTab(t)}
-              className={`flex-1 py-2.5 text-[10px] font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-1.5 ${
+          {([
+            ['build',    'Foreman',  <Bot className="w-3 h-3" />],
+            ['roster',   'Roster',   <Users className="w-3 h-3" />],
+            ['assembly', 'Assembly', <Factory className="w-3 h-3" />],
+          ] as const).map(([t, label, icon]) => (
+            <button key={t} onClick={() => setLeftTab(t as any)}
+              className={`flex-1 py-2 text-[9px] font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-1 ${
                 leftTab === t ? 'text-oldgold-400 border-b-2 border-oldgold-400 bg-midnight-800/50' : 'text-slate-500 hover:text-slate-300'
               }`}>
-              {t === 'build' ? <Bot className="w-3.5 h-3.5" /> : <Users className="w-3.5 h-3.5" />}
-              {t === 'build' ? 'Foreman' : 'Roster'}
+              {icon}{label}
+              {t === 'assembly' && assemblyStats && assemblyStats.done > 0 && (
+                <span className="ml-0.5 px-1 rounded-full bg-oldgold-500 text-midnight-950 text-[7px] font-black">{assemblyStats.done}</span>
+              )}
             </button>
           ))}
         </div>
@@ -650,6 +670,11 @@ function KreweCanvas() {
               </div>
             </div>
           </div>
+        ) : leftTab === 'assembly' ? (
+          <AssemblyLine
+            onEntryProduced={addAssemblyEntry}
+            onStatsUpdate={setAssemblyStats}
+          />
         ) : (
           <div className="flex-1 flex flex-col min-h-0">
             {/* category filter */}
@@ -760,6 +785,18 @@ function KreweCanvas() {
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
 
+              {/* Gallery button */}
+              {portfolio.length > 0 && (
+                <>
+                  <div className="w-px h-5 bg-midnight-700 mx-0.5" />
+                  <button onClick={() => setShowGallery(true)}
+                    className="px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1.5 text-slate-300 hover:text-oldgold-400 hover:bg-midnight-800 transition-colors border border-midnight-700">
+                    <Grid3x3 className="w-3.5 h-3.5" />
+                    GALLERY ({portfolio.length})
+                  </button>
+                </>
+              )}
+
               {/* Save Squad Up — only when live */}
               {avatar.status === 'live' && !running && (
                 <>
@@ -799,6 +836,15 @@ function KreweCanvas() {
           />
         )}
       </div>
+
+      {/* ── GALLERY OVERLAY ─────────────────────────────────────────────── */}
+      {showGallery && (
+        <GalleryView
+          entries={portfolio as any}
+          onClose={() => setShowGallery(false)}
+          onDelete={deletePortfolioEntry}
+        />
+      )}
 
       {/* ── RIGHT RAIL: THE VANITY + PORTFOLIO ──────────────────────────── */}
       <div className="w-[320px] shrink-0 border-l border-midnight-800 flex flex-col relative">

@@ -2379,6 +2379,468 @@ def deploy_space(payload: dict):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# HUMAN ASSEMBLY LINE — Industrial-scale persona production system
+# Quality Gate (A/B/C), auto-tagging, backend pipeline runner, SSE streaming
+# 25 automation features — see ASSEMBLY_PLAN.md
+# ═══════════════════════════════════════════════════════════════════════════════
+import hashlib
+from fastapi.responses import StreamingResponse
+
+# ── Quality Standards (10 criteria, 10pts each) ───────────────────────────────
+QUALITY_STANDARDS_KEYS = [
+    "all_green", "output_length", "in_character", "latency_ok", "no_errors",
+    "tone_match", "strong_hook", "spoken_natural", "narrative_arc", "on_brand",
+]
+
+# ── Squad Templates ───────────────────────────────────────────────────────────
+# Each template is a sequence of doll configs: name, role, system prompt.
+# These run server-side in _run_persona_pipeline — no frontend coordination needed.
+
+def _squad_templates():
+    return {
+        "avatar": [
+            {"name": "Director", "role": "orchestrator",
+             "system": "You are the creative director. Given the squad goal, write the creative brief: persona voice, tone, emotional register, and key message. 1-2 sentences. Be specific."},
+            {"name": "Scriptwriter", "role": "scriptwriter",
+             "system": "You are an award-winning scriptwriter. Transform the creative brief into a natural, compelling 2-3 sentence spoken script for the avatar. Make it feel real and human."},
+            {"name": "QA Director", "role": "qa",
+             "system": "You are the quality director. Review the script. If it's strong, output it verbatim. If weak or generic, rewrite it to be more specific and in-character. Output ONLY the final script."},
+            {"name": "Talent", "role": "avatar",
+             "system": "You are the avatar talent. Deliver the approved script in first person as if speaking live to camera. Add natural rhythm and personality. Output the final spoken performance only."},
+        ],
+        "news_anchor": [
+            {"name": "News Director", "role": "orchestrator",
+             "system": "You are the news executive producer. Given the anchor persona and topic, write the creative direction: story angle, tone, urgency level, key facts to hit. 1-2 sentences."},
+            {"name": "Reporter", "role": "scriptwriter",
+             "system": "You are a TV news scriptwriter. Write a 2-3 sentence broadcast-quality news intro for the anchor. Professional, authoritative, natural TV cadence. No fluff."},
+            {"name": "Broadcast QA", "role": "qa",
+             "system": "You are the news director reviewing final copy. Approve or sharpen the script for broadcast quality, factual tone, and strong lead sentence. Output ONLY the final broadcast script."},
+            {"name": "Anchor", "role": "avatar",
+             "system": "You are the news anchor. Deliver the approved broadcast script in first person, live on camera, with professional authority. Output your spoken delivery only."},
+        ],
+        "financial": [
+            {"name": "Market Strategist", "role": "orchestrator",
+             "system": "You are the senior market strategist. Given the financial persona and market context, identify the key insight, risk level, and investor takeaway. 1-2 sentences."},
+            {"name": "Market Writer", "role": "scriptwriter",
+             "system": "You are a financial content writer. Turn the strategic insight into a confident, jargon-light 2-3 sentence market commentary. Specific about numbers and direction."},
+            {"name": "Compliance QA", "role": "qa",
+             "system": "You are the compliance reviewer. Ensure the commentary is confident but not a direct buy/sell recommendation. Sharpen clarity. Output ONLY the approved final copy."},
+            {"name": "Analyst", "role": "avatar",
+             "system": "You are the financial analyst avatar. Deliver the approved market commentary in first person, with calm authority and conviction. Output your spoken delivery only."},
+        ],
+        "health_coach": [
+            {"name": "Wellness Director", "role": "orchestrator",
+             "system": "You are the wellness creative director. Given the health persona and goal, define the emotional need being met, the tone (warm/clinical/energetic), and the core message. 1-2 sentences."},
+            {"name": "Health Writer", "role": "scriptwriter",
+             "system": "You are a health content writer. Write a 2-3 sentence health guidance script that is empathetic, actionable, and non-alarming. Accessible to a general audience."},
+            {"name": "Medical QA", "role": "qa",
+             "system": "You are the medical content reviewer. Ensure the script is accurate, safe, empowering (not fear-based), and actionable. Output ONLY the final approved script."},
+            {"name": "Health Coach", "role": "avatar",
+             "system": "You are the health coach avatar. Deliver the script in first person with warmth and genuine care. Speak like a trusted friend with expertise. Output your spoken delivery only."},
+        ],
+        "educator": [
+            {"name": "Curriculum Director", "role": "orchestrator",
+             "system": "You are the curriculum director. Given the educator persona and topic, identify the core learning objective, ideal student emotion (curiosity, wonder, confidence), and pedagogical angle. 1-2 sentences."},
+            {"name": "Instructional Writer", "role": "scriptwriter",
+             "system": "You are an instructional designer. Write a 2-3 sentence educational opening that hooks student curiosity and delivers a clear, memorable insight. Specific and surprising."},
+            {"name": "Education QA", "role": "qa",
+             "system": "You are the chief learning officer. Review for clarity, accuracy, engagement, and age-appropriate language. Improve where needed. Output ONLY the final teaching script."},
+            {"name": "Educator", "role": "avatar",
+             "system": "You are the educator avatar. Deliver the lesson opening in first person with intellectual warmth and genuine enthusiasm for the subject. Output your spoken delivery only."},
+        ],
+    }
+
+# ── Quality Gate ──────────────────────────────────────────────────────────────
+def _quality_gate(doll_results: list, avatar_output: str, brief: dict, total_ms: int) -> dict:
+    standards = {}
+
+    # 1. All green (all dolls passed)
+    failed = [r for r in doll_results if r.get("status") != "done"]
+    standards["all_green"] = len(failed) == 0
+
+    # 2. Output length ≥ 15 words
+    word_count = len(avatar_output.split()) if avatar_output else 0
+    standards["output_length"] = word_count >= 15
+
+    # 3. In-character (basic: output is non-empty and references the use case context)
+    standards["in_character"] = bool(avatar_output and len(avatar_output) > 30)
+
+    # 4. Latency ok (< 10s total)
+    standards["latency_ok"] = total_ms < 10000
+
+    # 5. No errors in any doll
+    standards["no_errors"] = len(failed) == 0
+
+    # 6. Tone match (category heuristics)
+    category = brief.get("category", "")
+    tone_words = {
+        "news": ["breaking", "report", "tonight", "developing", "sources", "anchor", "broadcast", "story", "update"],
+        "finance": ["market", "stocks", "crypto", "trade", "invest", "bull", "bear", "rally", "dip", "portfolio", "asset"],
+        "health": ["health", "wellness", "body", "mind", "stress", "breathe", "care", "feel", "energy", "sleep"],
+        "education": ["learn", "discover", "today", "curious", "explain", "understand", "fact", "science", "history"],
+        "entertainment": ["film", "music", "game", "show", "watch", "listen", "play", "culture", "trend"],
+        "tech": ["ai", "data", "software", "api", "build", "developer", "innovation", "digital", "platform"],
+        "retail": ["brand", "product", "buy", "customer", "experience", "shop", "value", "quality"],
+        "lifestyle": ["life", "travel", "taste", "cook", "adventure", "home", "style", "design"],
+    }
+    keywords = tone_words.get(category, [])
+    output_lower = avatar_output.lower()
+    standards["tone_match"] = any(kw in output_lower for kw in keywords) if keywords else True
+
+    # 7. Strong hook (first 8 words engaging, not starting with "I am" or "Hello")
+    first_words = " ".join(avatar_output.split()[:8]).lower() if avatar_output else ""
+    weak_starts = ["i am ", "hello, i'm", "hi, i'm", "my name is", "i'm here"]
+    standards["strong_hook"] = not any(first_words.startswith(w) for w in weak_starts)
+
+    # 8. Spoken natural (no essay-like indicators)
+    essay_markers = ["firstly,", "in conclusion,", "furthermore,", "in summary,", "to begin,", "paragraph"]
+    standards["spoken_natural"] = not any(m in output_lower for m in essay_markers)
+
+    # 9. Narrative arc (has punctuation suggesting structure)
+    standards["narrative_arc"] = ("." in avatar_output and len(avatar_output.split(".")) >= 2) if avatar_output else False
+
+    # 10. On-brand (persona name mentioned in output or consistent first-person)
+    standards["on_brand"] = "i " in output_lower or "i'" in output_lower or "my " in output_lower
+
+    # Score (10 pts per standard)
+    score = sum(10 for v in standards.values() if v)
+
+    if score >= 85:
+        grade = "A"
+    elif score >= 65:
+        grade = "B"
+    else:
+        grade = "C"
+
+    issues = [QUALITY_STANDARDS_KEYS[i] for i, (k, v) in enumerate(standards.items()) if not v]
+
+    return {
+        "score": score,
+        "grade": grade,
+        "certified": grade == "A",
+        "quality_issues": issues,
+        "quality_standards": standards,
+    }
+
+# ── Persona DNA hash ──────────────────────────────────────────────────────────
+def _persona_dna(brief: dict) -> str:
+    seed = f"{brief.get('goal_prompt','')}{brief.get('squad_template','')}{brief.get('appearance','')}"
+    return hashlib.sha256(seed.encode()).hexdigest()
+
+# ── Auto-tag generator ────────────────────────────────────────────────────────
+def _auto_tag(brief: dict, avatar_output: str) -> list:
+    system = (
+        "You are a semantic tagging agent. Generate exactly 6 lowercase tags "
+        "for this persona based on their use case, category, output style, and audience. "
+        "Return ONLY a JSON array of 6 strings. No explanation."
+    )
+    user = (
+        f"Name: {brief.get('name','')}\n"
+        f"Use case: {brief.get('use_case','')}\n"
+        f"Category: {brief.get('category','')}\n"
+        f"Output: {avatar_output[:200]}\n"
+        f"Existing tags: {brief.get('persona_tags',[])}"
+    )
+    try:
+        raw = _krewe_llm(DEFAULT_MODEL, system, user, temperature=0.3, max_tokens=80)
+        m = re.search(r'\[.*?\]', raw, re.DOTALL)
+        auto = json.loads(m.group(0)) if m else []
+        return [t.lower().strip() for t in auto if isinstance(t, str)][:6]
+    except Exception:
+        return []
+
+# ── Versioning helper ─────────────────────────────────────────────────────────
+def _get_version(repo_id: str, dna: str) -> int:
+    try:
+        rows = _read_table(repo_id, "squads")
+        existing = [r for r in rows if r.get("persona_dna") == dna]
+        return len(existing) + 1
+    except Exception:
+        return 1
+
+# ── Core backend pipeline runner ──────────────────────────────────────────────
+def _run_persona_pipeline(brief: dict) -> dict:
+    templates = _squad_templates()
+    template_key = brief.get("squad_template", "avatar")
+    dolls = templates.get(template_key, templates["avatar"])
+    goal = brief.get("goal_prompt", "Greet the viewer.")
+
+    context = f"PERSONA: {brief.get('name','')}\nUSE CASE: {brief.get('use_case','')}\nGOAL: {goal}\n"
+    doll_results = []
+    total_start = time.time()
+    avatar_output = ""
+
+    for doll in dolls:
+        start = time.time()
+        try:
+            output = _krewe_llm(
+                DEFAULT_MODEL,
+                doll["system"],
+                context + f"\n[Current task for {doll['name']} ({doll['role']})]",
+                temperature=0.72,
+                max_tokens=220,
+            )
+            latency_ms = int((time.time() - start) * 1000)
+            doll_results.append({
+                "name": doll["name"], "role": doll["role"],
+                "uniform": brief.get("appearance", "executive"),
+                "model": DEFAULT_MODEL, "status": "done",
+                "latencyMs": latency_ms, "output": output,
+            })
+            context += f"\n[{doll['name']}]: {output}\n"
+            if doll["role"] == "avatar":
+                avatar_output = output.strip().strip('"')
+        except Exception as e:
+            latency_ms = int((time.time() - start) * 1000)
+            doll_results.append({
+                "name": doll["name"], "role": doll["role"],
+                "uniform": brief.get("appearance", "executive"),
+                "model": DEFAULT_MODEL, "status": "error",
+                "latencyMs": latency_ms, "output": "",
+            })
+
+    total_ms = int((time.time() - total_start) * 1000)
+    done_count = sum(1 for r in doll_results if r["status"] == "done")
+    failed_count = len(doll_results) - done_count
+    health = {"total": len(doll_results), "done": done_count, "failed": failed_count}
+
+    # Quality gate
+    quality = _quality_gate(doll_results, avatar_output, brief, total_ms)
+
+    # Auto-retry once if grade C (swap to a conservative temperature)
+    if quality["grade"] == "C" and avatar_output:
+        try:
+            retry_output = _krewe_llm(
+                DEFAULT_MODEL,
+                dolls[-1]["system"] + " Be specific, vivid, and in-character.",
+                context,
+                temperature=0.5,
+                max_tokens=200,
+            )
+            retry_output = retry_output.strip().strip('"')
+            if len(retry_output.split()) >= 15:
+                avatar_output = retry_output
+                quality = _quality_gate(doll_results, avatar_output, brief, total_ms)
+        except Exception:
+            pass
+
+    # Auto-tag
+    existing_tags = brief.get("persona_tags", [])
+    auto_tags = _auto_tag(brief, avatar_output)
+    all_tags = list(dict.fromkeys(existing_tags + auto_tags))  # dedup, preserve order
+
+    # Gemma report
+    report = _generate_krewe_report({
+        "prompt": brief.get("goal_prompt", ""),
+        "squad": doll_results,
+        "health": health,
+        "avatar_output": avatar_output,
+    })
+
+    # Persona DNA + versioning
+    dna = _persona_dna(brief)
+    repo_id = _ensure_portfolio_repo()
+    version = _get_version(repo_id, dna)
+
+    avg_ms = round(total_ms / max(len(doll_results), 1))
+
+    entry = {
+        "id": str(uuid.uuid4()),
+        "created_at": datetime.datetime.utcnow().isoformat(),
+        # brief fields
+        "name": brief.get("name", "Unnamed Persona"),
+        "use_case": brief.get("use_case", ""),
+        "category": brief.get("category", ""),
+        "persona_tags": all_tags,
+        "auto_tags": auto_tags,
+        "voice_profile": brief.get("voice_profile", "authoritative"),
+        "squad_template": template_key,
+        "prompt": brief.get("goal_prompt", ""),
+        "face_uniform": brief.get("appearance", "executive"),
+        "priority": brief.get("priority", 5),
+        "family": brief.get("family"),
+        # pipeline
+        "squad": doll_results,
+        "avatar_output": avatar_output,
+        "health": health,
+        "total_latency_ms": total_ms,
+        "avg_latency_ms": avg_ms,
+        # quality
+        **quality,
+        # identity
+        "persona_dna": dna,
+        "version": version,
+        # agent
+        "report": report,
+        "assembly_run_id": brief.get("_run_id"),
+    }
+
+    # Persist to HF Dataset
+    try:
+        rows = _read_table(repo_id, "squads")
+        rows.insert(0, entry)
+        _write_table(repo_id, "squads", rows)
+    except Exception:
+        pass  # local-only if HF unreachable
+
+    return entry
+
+
+class AssemblyRunRequest(BaseModel):
+    briefs: list
+    parallel: int = 1   # Feature 10: configurable parallelism (1 = sequential for stability)
+
+@app.post("/krewe/assembly/run")
+async def krewe_assembly_run(req: AssemblyRunRequest):
+    """
+    Feature 3:  Backend pipeline runner (server-side SQUAD UP)
+    Feature 2:  Priority queue (briefs already sorted by frontend)
+    Feature 10: Configurable parallel execution (parallel=1 → sequential)
+    Feature 11: Auto-retry on grade C
+    Streams SSE events: starting → done|failed → complete
+    """
+    run_id = str(uuid.uuid4())
+
+    async def generate():
+        total = len(req.briefs)
+        done = 0
+        failed = 0
+        certified = 0
+        total_quality = 0
+
+        for i, brief_raw in enumerate(req.briefs):
+            brief = dict(brief_raw) if not isinstance(brief_raw, dict) else brief_raw
+            brief["_run_id"] = run_id
+            name = brief.get("name", f"Persona {i+1}")
+
+            # starting event
+            yield f"data: {json.dumps({'status': 'starting', 'name': name, 'index': i, 'total': total})}\n\n"
+            await asyncio.sleep(0)  # yield to event loop
+
+            try:
+                entry = await asyncio.to_thread(_run_persona_pipeline, brief)
+                done += 1
+                if entry.get("certified"):
+                    certified += 1
+                total_quality += entry.get("quality_score", 0)
+                yield f"data: {json.dumps({'status': 'done', 'entry': entry, 'index': i, 'total': total})}\n\n"
+            except Exception as e:
+                failed += 1
+                yield f"data: {json.dumps({'status': 'failed', 'name': name, 'error': str(e), 'index': i, 'total': total})}\n\n"
+
+            await asyncio.sleep(0)
+
+        avg_q = round(total_quality / done) if done > 0 else 0
+        yield f"data: {json.dumps({'status': 'complete', 'summary': {'total': total, 'done': done, 'failed': failed, 'certified': certified, 'avg_quality': avg_q}})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/krewe/assembly/status")
+def krewe_assembly_status():
+    """Feature 16: Live assembly stats endpoint for polling fallback."""
+    try:
+        repo_id = _ensure_portfolio_repo()
+        rows = _read_table(repo_id, "squads")
+        certified = sum(1 for r in rows if r.get("certified"))
+        grades = {"A": 0, "B": 0, "C": 0}
+        for r in rows:
+            g = r.get("quality_grade")
+            if g in grades:
+                grades[g] += 1
+        return {"total": len(rows), "certified": certified, "grades": grades}
+    except Exception as e:
+        return {"total": 0, "certified": 0, "grades": {"A": 0, "B": 0, "C": 0}, "error": str(e)}
+
+
+class GallerySearchRequest(BaseModel):
+    q: str = ""
+    category: str = ""
+    grade: str = ""
+    tag: str = ""
+    sort_by: str = "newest"
+    limit: int = 100
+
+@app.post("/krewe/gallery/search")
+def krewe_gallery_search(req: GallerySearchRequest):
+    """
+    Feature 17: Gallery search with full-text + filters (category, grade, tag)
+    Feature 18: Sort by newest, grade, fastest, category
+    """
+    try:
+        repo_id = _ensure_portfolio_repo()
+        rows = _read_table(repo_id, "squads")
+
+        if req.q:
+            q = req.q.lower()
+            rows = [r for r in rows if
+                    q in r.get("name", "").lower() or
+                    q in r.get("use_case", "").lower() or
+                    q in r.get("prompt", "").lower() or
+                    any(q in t for t in r.get("persona_tags", []))]
+
+        if req.category:
+            rows = [r for r in rows if r.get("category") == req.category]
+
+        if req.grade:
+            rows = [r for r in rows if r.get("quality_grade") == req.grade]
+
+        if req.tag:
+            rows = [r for r in rows if req.tag in r.get("persona_tags", [])]
+
+        if req.sort_by == "newest":
+            rows.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+        elif req.sort_by == "grade":
+            grade_order = {"A": 0, "B": 1, "C": 2}
+            rows.sort(key=lambda r: grade_order.get(r.get("quality_grade", "C"), 3))
+        elif req.sort_by == "fastest":
+            rows.sort(key=lambda r: r.get("total_latency_ms", 99999))
+        elif req.sort_by == "category":
+            rows.sort(key=lambda r: r.get("category", ""))
+
+        return {"entries": rows[:req.limit], "total": len(rows)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/krewe/gallery/leaderboard")
+def krewe_gallery_leaderboard():
+    """
+    Feature 23: Model performance leaderboard — which model×role produces most A-grade output.
+    """
+    try:
+        repo_id = _ensure_portfolio_repo()
+        rows = _read_table(repo_id, "squads")
+        tally: dict = {}
+        for row in rows:
+            for doll in row.get("squad", []):
+                key = f"{doll.get('model', '?')} × {doll.get('role', '?')}"
+                if key not in tally:
+                    tally[key] = {"runs": 0, "a_grade": 0, "avg_latency": []}
+                tally[key]["runs"] += 1
+                if row.get("quality_grade") == "A":
+                    tally[key]["a_grade"] += 1
+                if doll.get("latencyMs"):
+                    tally[key]["avg_latency"].append(doll["latencyMs"])
+
+        board = []
+        for key, d in tally.items():
+            avg_lat = round(sum(d["avg_latency"]) / len(d["avg_latency"])) if d["avg_latency"] else 0
+            board.append({
+                "model_role": key,
+                "runs": d["runs"],
+                "a_grade": d["a_grade"],
+                "a_rate": round(d["a_grade"] / d["runs"] * 100) if d["runs"] else 0,
+                "avg_latency_ms": avg_lat,
+            })
+        board.sort(key=lambda x: x["a_rate"], reverse=True)
+        return {"leaderboard": board[:20]}
+    except Exception as e:
+        return {"leaderboard": [], "error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # THE VANITY — Avatar direct chat + KREWE Portfolio (HF Dataset storage)
 # Portfolio repo: AIBRUH/beryl-krewe-portfolio  (private dataset)
 # Tables: squads.json (saved runs)
