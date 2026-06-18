@@ -1,0 +1,46 @@
+{
+  "plan": "PRO",
+  "credits": 4.77,
+  "automatic_recharge": null,
+  "current_period_usage": 27.74,
+  "period_start": "Jun 1",
+  "period_ends": "Jul 1",
+  "storage": {
+    "private_tb_used": 0.01,
+    "private_tb_total": 1,
+    "public_tb_used": 0.01,
+    "public_tb_total": 11.2
+  },
+  "compute": {
+    "zerogpu_used_min": 0,
+    "zerogpu_total_min": 40,
+    "inference_used": 0.12,
+    "inference_total": 2.0
+  },
+  "rate_limits": {
+    "hub_apis_used": 7,
+    "hub_apis_total": 2500,
+    "resolvers_used": 2,
+    "resolvers_total": 12000,
+    "pages_used": 2,
+    "pages_total": 400
+  },
+  "inference_breakdown": {
+    "total_requests": 11,
+    "total_cost": 0.12,
+    "providers": [
+      { "name": "fal", "requests": 6 },
+      { "name": "Together AI", "requests": 4 },
+      { "name": "Nscale", "requests": 1 }
+    ]
+  },
+  "compute_usage": {
+    "spaces_total": 25.7,
+    "items": [
+      { "name": "AIBRUH/beryllive-os-core", "hardware": "A10G small", "duration": "21h 30m", "cost": 21.5 },
+      { "name": "AIBRUH/echomimic-v2 (deleted)", "hardware": "1xL4", "duration": "42m", "cost": 0.56 },
+      { "name": "AIBRUH/latentsync", "hardware": "1xL4", "duration": "45m", "cost": 0.6 }
+    ]
+  },
+  "last_updated": "2026-06-17"
+}

@@ -1,4 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, Component } from 'react';
+
+class ErrorBoundary extends Component<{children: React.ReactNode}, {error: Error | null}> {
+  constructor(props: any) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    if (this.state.error) return (
+      <div style={{position:'fixed',inset:0,background:'#0d0614',color:'#ff4444',fontFamily:'monospace',padding:'2rem',zIndex:9999,overflow:'auto'}}>
+        <h2 style={{color:'#D4AF37',marginBottom:'1rem'}}>BERYL HF — Render Error</h2>
+        <pre style={{whiteSpace:'pre-wrap',fontSize:'13px'}}>{this.state.error.message}{'\n\n'}{this.state.error.stack}</pre>
+      </div>
+    );
+    return this.props.children;
+  }
+}
 import ChatPane from './components/ChatPane';
 import CanvasPane from './components/CanvasPane';
 import ModelSelector from './components/ModelSelector';
@@ -18,7 +32,7 @@ import ComfyUIMirror from './components/ComfyUIMirror';
 import FlipMode from './components/FlipMode';
 import GenSherman from './components/GenSherman';
 import BottomNav from './components/BottomNav';
-import { Settings, Monitor, Zap, MessageSquare, TrendingUp, Globe, Cpu, DollarSign, Wand2, TerminalSquare, BookOpen, Minimize2, Server } from 'lucide-react';
+import { Settings, Monitor, Zap, MessageSquare, TrendingUp, Globe, Cpu, DollarSign, Wand2, TerminalSquare, BookOpen, Minimize2, Server, FolderOpen, X, Sparkles } from 'lucide-react';
 
 const App: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState('MiniMaxAI/MiniMax-M2.5');
@@ -26,6 +40,8 @@ const App: React.FC = () => {
   const [currentArtifact, setCurrentArtifact] = useState<any>(null);
   const [isComputerUseEnabled, setIsComputerUseEnabled] = useState(false);
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
+  const [isFileMenuOpen, setIsFileMenuOpen] = useState(false);
+  const [isVoiceOpen, setIsVoiceOpen] = useState(true);
   const [currentPage, setCurrentPage] = useState<'chat' | 'trending' | 'spaces' | 'gpu' | 'cost' | 'studio' | 'cli' | 'docs' | 'compact' | 'ollama' | 'comfy' | 'fliip' | 'sherman'>('chat');
 
   const handleAddModel = (modelId: string) => {
@@ -56,7 +72,6 @@ const App: React.FC = () => {
             {/* Live Viewport (66%) */}
             <div className="w-[67%] flex flex-col bg-slate-950 relative">
               <CanvasPane artifact={currentArtifact} />
-              <ProjectManager />
             </div>
           </main>
         );
@@ -90,14 +105,25 @@ const App: React.FC = () => {
   };
 
   return (
+    <ErrorBoundary>
     <div className="flex flex-col h-screen bg-midnight-950 text-slate-100 overflow-hidden">
       {/* Top Header */}
       <header className="flex items-center justify-between px-4 py-2 bg-midnight-900 border-b border-midnight-800 drag shrink-0 relative">
-        <div className="flex items-center space-x-2 mr-2">
-          <Zap className="w-5 h-5 text-oldgold-400" />
-          <span className="font-bold text-lg tracking-tight text-white">BERYL HF</span>
+        <div className="flex items-center space-x-3 mr-2">
+          <div className="flex items-center space-x-2">
+            <Zap className="w-5 h-5 text-oldgold-400" />
+            <span className="font-bold text-lg tracking-tight text-white">BERYL HF</span>
+          </div>
+          <button
+            onClick={() => setIsFileMenuOpen(true)}
+            className={`nav-flash px-3 py-1 rounded-md text-[11px] font-bold transition-all flex items-center space-x-1.5 ${isFileMenuOpen ? 'bg-oldgold-500 text-midnight-950' : 'text-slate-400 hover:text-oldgold-400 hover:bg-midnight-800 border border-midnight-800'}`}
+            title="Project files & workspace"
+          >
+            <FolderOpen className="w-3.5 h-3.5" />
+            <span>FILE</span>
+          </button>
         </div>
-        
+
         {/* Global Nav Menu - Absolutely centered */}
         <nav className="absolute left-1/2 -translate-x-1/2 flex items-center bg-midnight-950/80 rounded-lg p-1 border border-midnight-800/50 backdrop-blur-sm">
           <button 
@@ -181,7 +207,14 @@ const App: React.FC = () => {
           />
           
           <div className="flex items-center space-x-2 border-l border-midnight-800 pl-4">
-            <button 
+            <button
+              onClick={() => setIsVoiceOpen(!isVoiceOpen)}
+              className={`p-1.5 rounded-md transition-colors relative ${isVoiceOpen ? 'bg-oldgold-500 text-midnight-950' : 'hover:bg-midnight-800 text-slate-400 hover:text-oldgold-400'}`}
+              title="O.V.E Voice Agent"
+            >
+              <Sparkles className="w-5 h-5" />
+            </button>
+            <button
               onClick={() => setIsComputerUseEnabled(!isComputerUseEnabled)}
               className={`p-1.5 rounded-md transition-colors ${isComputerUseEnabled ? 'bg-oldgold-500 text-midnight-950' : 'hover:bg-midnight-800 text-slate-400 hover:text-oldgold-400'}`}
               title="Computer Use (Vision)"
@@ -224,12 +257,41 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Global Floating Voice Agent */}
-      <VoiceAgent onArtifactCreated={setCurrentArtifact} />
+      {/* FILE Menu Overlay (Project Hub) — anchored upper-left */}
+      {isFileMenuOpen && (
+        <div
+          className="fixed inset-0 z-[60]"
+          onClick={() => setIsFileMenuOpen(false)}
+        >
+          <div className="absolute inset-0 bg-midnight-950/40 backdrop-blur-[2px]" />
+          <div
+            className="absolute top-14 left-4 w-[480px] max-w-[90vw] animate-[fadeIn_0.15s_ease-out]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-2 px-1">
+              <div className="flex items-center space-x-2 text-oldgold-400">
+                <FolderOpen className="w-4 h-4" />
+                <span className="text-xs font-bold uppercase tracking-widest">File · Project Workspace</span>
+              </div>
+              <button
+                onClick={() => setIsFileMenuOpen(false)}
+                className="p-1 rounded-md text-slate-400 hover:text-oldgold-400 hover:bg-midnight-800 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <ProjectManager />
+          </div>
+        </div>
+      )}
+
+      {/* Global Voice Agent — right panel */}
+      <VoiceAgent onArtifactCreated={setCurrentArtifact} isOpen={isVoiceOpen} onClose={() => setIsVoiceOpen(false)} />
 
       {/* Global Bottom Navigation Footer */}
       <BottomNav currentPage={currentPage} setCurrentPage={setCurrentPage} />
     </div>
+    </ErrorBoundary>
   );
 };
 

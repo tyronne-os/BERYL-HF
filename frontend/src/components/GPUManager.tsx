@@ -1,33 +1,58 @@
-import React, { useState } from 'react';
-import { Cpu, Clock, Activity, ChevronRight, Zap } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { Cpu, Activity, Server, Gauge, MemoryStick, Thermometer, Zap, ExternalLink, RefreshCw } from 'lucide-react';
+import { API } from '../api';
 
-interface GPUOption {
-  id: string;
-  name: string;
-  price: string;
-  status: 'available' | 'busy' | 'offline';
-}
+interface Stats { cpu_percent: number; cpu_count: number; ram_used_gb: number; ram_total_gb: number; ram_percent: number; node_mem_gb: number; py_mem_gb: number; }
+interface Gpu { name: string; mem_used_mb: number; mem_total_mb: number; mem_percent: number; util_percent: number; temp_c: number; power_w: number; }
+interface GpuResp { gpus: Gpu[]; available: boolean; vendor?: string; adapter?: string; detail?: string; }
+interface SpaceItem { name: string; hardware: string; duration: string; cost: number; }
+
+// Real Hugging Face Spaces hardware tiers (public pricing, $/hr)
+const HF_TIERS = [
+  { id: 'zero', name: 'ZeroGPU (H200 slice)', vram: 'Dynamic', price: 'Free (PRO)' },
+  { id: 'cpu-basic', name: 'CPU Basic', vram: '—', price: 'Free' },
+  { id: 't4-small', name: 'T4 small', vram: '16 GB', price: '$0.40/hr' },
+  { id: 'l4', name: 'L4', vram: '24 GB', price: '$0.80/hr' },
+  { id: 'a10g-small', name: 'A10G small', vram: '24 GB', price: '$1.00/hr' },
+  { id: 'a100', name: 'A100 large', vram: '80 GB', price: '$4.00/hr' },
+];
+
+const Ring: React.FC<{ pct: number; label: string; value: string; color: string }> = ({ pct, label, value, color }) => {
+  const r = 42, c = 2 * Math.PI * r, off = c - (Math.min(pct, 100) / 100) * c;
+  return (
+    <div className="flex flex-col items-center">
+      <div className="relative w-28 h-28">
+        <svg className="w-28 h-28 -rotate-90" viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r={r} fill="none" stroke="#1a0b2e" strokeWidth="8" />
+          <circle cx="50" cy="50" r={r} fill="none" stroke={color} strokeWidth="8" strokeLinecap="round"
+            strokeDasharray={c} strokeDashoffset={off} style={{ transition: 'stroke-dashoffset 0.6s ease' }} />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-xl font-bold text-white">{value}</span>
+          <span className="text-[9px] text-slate-500 uppercase font-bold">{label}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const GPUManager: React.FC = () => {
-  const [selectedGpu, setSelectedGpu] = useState<string>('zero-gpu');
-  const [sleepTimer, setSleepTimer] = useState<number>(30);
-  const [selectedProject, setSelectedProject] = useState<string>('hf-desktop-client');
-  const [isOverlayOpen, setIsOverlayOpen] = useState(false);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [gpu, setGpu] = useState<GpuResp | null>(null);
+  const [spaces, setSpaces] = useState<{ items: SpaceItem[]; total: number } | null>(null);
 
-  const gpuOptions: GPUOption[] = [
-    { id: 'zero-gpu', name: 'ZeroGPU (HF Spaces)', price: 'Free', status: 'available' },
-    { id: 't4', name: 'NVIDIA T4', price: '$0.60/hr', status: 'available' },
-    { id: 'l4', name: 'NVIDIA L4', price: '$0.80/hr', status: 'available' },
-    { id: 'a10g', name: 'NVIDIA A10G Small', price: '$1.05/hr', status: 'busy' },
-    { id: 'a100', name: 'NVIDIA A100 80GB', price: '$4.25/hr', status: 'available' },
-  ];
+  const poll = async () => {
+    try { const { data } = await axios.get<Stats>(`${API}/system/stats`); setStats(data); } catch {}
+    try { const { data } = await axios.get<GpuResp>(`${API}/system/gpu`); setGpu(data); } catch {}
+  };
 
-  const projects = ['hf-desktop-client', 'beryllive', 'myworld', 'dyad-apps'];
-
-  const usageHistory = [
-    { time: '10:00 AM', gpu: 'T4', project: 'hf-desktop-client', duration: '45m', cost: '$0.45' },
-    { time: '02:30 PM', gpu: 'A10G', project: 'beryllive', duration: '12m', cost: '$0.21' },
-  ];
+  useEffect(() => {
+    poll();
+    axios.get(`${API}/hf/billing`).then(({ data }) => setSpaces({ items: data.compute_usage.items, total: data.compute_usage.spaces_total })).catch(() => {});
+    const t = setInterval(poll, 2000);
+    return () => clearInterval(t);
+  }, []);
 
   return (
     <div className="flex-1 bg-slate-900 text-slate-100 p-8 overflow-y-auto">
@@ -35,197 +60,120 @@ const GPUManager: React.FC = () => {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold flex items-center space-x-3">
-              <Cpu className="w-8 h-8 text-green-500" />
-              <span>GPU Resource Management</span>
+              <Cpu className="w-8 h-8 text-cyan-400" />
+              <span>Compute Monitor</span>
             </h1>
-            <p className="text-slate-400 mt-2">Scale and monitor your project's compute power.</p>
+            <p className="text-slate-400 mt-2">Live local telemetry and Hugging Face Spaces compute.</p>
           </div>
-          <button 
-            onClick={() => setIsOverlayOpen(true)}
-            className="bg-blue-600 hover:bg-blue-500 px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-blue-900/20 transition-all flex items-center space-x-2"
-          >
-            <Zap className="w-5 h-5" />
-            <span>Provision New GPU</span>
-          </button>
+          <div className="flex items-center space-x-2 text-[10px] font-bold uppercase tracking-widest text-green-400">
+            <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" /><span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" /></span>
+            <span>Live · 2s refresh</span>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Active GPU Status */}
-          <div className="lg:col-span-2 space-y-6">
-            <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6">
-              <h2 className="text-lg font-bold mb-6 flex items-center space-x-2">
-                <Activity className="w-5 h-5 text-blue-400" />
-                <span>Active Deployment</span>
-              </h2>
-              <div className="flex items-center justify-between p-4 bg-slate-900/50 rounded-xl border border-slate-700">
-                <div className="flex items-center space-x-4">
-                  <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center">
-                    <Cpu className="w-6 h-6 text-green-500" />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-slate-100">{gpuOptions.find(g => g.id === selectedGpu)?.name}</h3>
-                    <p className="text-xs text-slate-500 uppercase font-bold tracking-widest">{selectedProject}</p>
-                  </div>
+        {/* Live local telemetry */}
+        <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 mb-8">
+          <h2 className="text-lg font-bold mb-6 flex items-center space-x-2"><Activity className="w-5 h-5 text-cyan-400" /><span>This Machine</span></h2>
+          {stats ? (
+            <div className="flex items-center justify-around flex-wrap gap-6">
+              <Ring pct={stats.cpu_percent} label={`${stats.cpu_count} cores`} value={`${Math.round(stats.cpu_percent)}%`} color="#22d3ee" />
+              <Ring pct={stats.ram_percent} label={`${stats.ram_total_gb} GB`} value={`${Math.round(stats.ram_percent)}%`} color="#D4AF37" />
+              <div className="grid grid-cols-2 gap-4 flex-1 min-w-[280px]">
+                <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-700/50">
+                  <div className="flex items-center space-x-2 text-slate-400 text-xs mb-1"><MemoryStick className="w-4 h-4" /><span>RAM Used</span></div>
+                  <p className="text-xl font-bold">{stats.ram_used_gb} <span className="text-sm text-slate-500">/ {stats.ram_total_gb} GB</span></p>
                 </div>
-                <div className="text-right">
-                  <span className="text-2xl font-mono font-bold text-blue-400">00:14:52</span>
-                  <p className="text-[10px] text-slate-500 uppercase">Current Session Time</p>
+                <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-700/50">
+                  <div className="flex items-center space-x-2 text-slate-400 text-xs mb-1"><Server className="w-4 h-4" /><span>Node (Vite)</span></div>
+                  <p className="text-xl font-bold">{stats.node_mem_gb} <span className="text-sm text-slate-500">GB</span></p>
                 </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-4 mt-6">
-                <div className="bg-slate-900/30 p-4 rounded-xl border border-slate-700/50">
-                  <span className="text-xs text-slate-500 block mb-1">Cost / Hour</span>
-                  <span className="text-xl font-bold">{gpuOptions.find(g => g.id === selectedGpu)?.price}</span>
+                <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-700/50">
+                  <div className="flex items-center space-x-2 text-slate-400 text-xs mb-1"><Cpu className="w-4 h-4" /><span>Python (API)</span></div>
+                  <p className="text-xl font-bold">{stats.py_mem_gb} <span className="text-sm text-slate-500">GB</span></p>
                 </div>
-                <div className="bg-slate-900/30 p-4 rounded-xl border border-slate-700/50">
-                  <span className="text-xs text-slate-500 block mb-1">Sleeper Timer</span>
-                  <div className="flex items-center space-x-2">
-                     <Clock className="w-4 h-4 text-orange-400" />
-                     <span className="text-xl font-bold">{sleepTimer}m</span>
-                  </div>
-                </div>
-                <div className="bg-slate-900/30 p-4 rounded-xl border border-slate-700/50">
-                  <span className="text-xs text-slate-500 block mb-1">Daily Usage</span>
-                  <span className="text-xl font-bold">$1.24</span>
+                <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-700/50">
+                  <div className="flex items-center space-x-2 text-slate-400 text-xs mb-1"><Gauge className="w-4 h-4" /><span>CPU Load</span></div>
+                  <p className="text-xl font-bold">{Math.round(stats.cpu_percent)}<span className="text-sm text-slate-500">%</span></p>
                 </div>
               </div>
             </div>
+          ) : (
+            <div className="flex items-center justify-center h-32 text-slate-500"><RefreshCw className="w-5 h-5 animate-spin mr-2" /> Reading telemetry…</div>
+          )}
+        </div>
 
-            <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6">
-              <h2 className="text-lg font-bold mb-6 flex items-center space-x-2">
-                <Clock className="w-5 h-5 text-slate-400" />
-                <span>Usage History</span>
-              </h2>
+        {/* GPU */}
+        <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 mb-8">
+          <h2 className="text-lg font-bold mb-6 flex items-center space-x-2"><Zap className="w-5 h-5 text-green-400" /><span>Graphics Adapter</span></h2>
+          {gpu && gpu.available ? (
+            <div className="space-y-4">
+              {gpu.gpus.map((g, i) => (
+                <div key={i} className="bg-slate-900/50 rounded-xl p-5 border border-green-500/20">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-bold text-white flex items-center space-x-2"><Zap className="w-4 h-4 text-green-400" /><span>{g.name}</span></h3>
+                    <span className="text-[10px] font-black px-2 py-0.5 rounded bg-green-500/15 text-green-400 border border-green-500/30">CUDA</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-4">
+                    <div><div className="flex items-center space-x-1 text-xs text-slate-400 mb-1"><MemoryStick className="w-3 h-3" /><span>VRAM</span></div><p className="font-bold">{Math.round(g.mem_used_mb)}/{Math.round(g.mem_total_mb)} MB</p></div>
+                    <div><div className="flex items-center space-x-1 text-xs text-slate-400 mb-1"><Gauge className="w-3 h-3" /><span>Util</span></div><p className="font-bold">{g.util_percent}%</p></div>
+                    <div><div className="flex items-center space-x-1 text-xs text-slate-400 mb-1"><Thermometer className="w-3 h-3" /><span>Temp</span></div><p className="font-bold">{g.temp_c}°C</p></div>
+                    <div><div className="flex items-center space-x-1 text-xs text-slate-400 mb-1"><Zap className="w-3 h-3" /><span>Power</span></div><p className="font-bold">{g.power_w} W</p></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="bg-slate-900/50 rounded-xl p-5 border border-slate-700/50 flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center border border-slate-700"><Cpu className="w-5 h-5 text-slate-400" /></div>
+                <div>
+                  <p className="font-bold text-slate-200">{gpu?.adapter || 'Detecting…'}</p>
+                  <p className="text-xs text-slate-500">Integrated graphics · no dedicated CUDA device</p>
+                </div>
+              </div>
+              <span className="text-[10px] font-black px-2 py-0.5 rounded bg-slate-700 text-slate-400 border border-slate-600">INTEGRATED</span>
+            </div>
+          )}
+          <p className="text-xs text-slate-500 mt-4">For heavy generative workloads, deploy to a Hugging Face Spaces GPU below — your local machine has no CUDA device.</p>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* HF Spaces compute usage (real, from billing mirror) */}
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-lg font-bold flex items-center space-x-2"><Server className="w-5 h-5 text-oldgold-400" /><span>HF Spaces Compute</span></h2>
+              {spaces && <span className="text-lg font-bold text-oldgold-400">${spaces.total.toFixed(2)}</span>}
+            </div>
+            {spaces ? (
               <div className="space-y-3">
-                {usageHistory.map((item, i) => (
-                  <div key={i} className="flex items-center justify-between p-3 bg-slate-900/30 rounded-lg border border-slate-700/30 text-sm">
-                    <div className="flex items-center space-x-4">
-                      <span className="text-slate-500 font-mono text-xs">{item.time}</span>
-                      <span className="font-bold">{item.gpu}</span>
-                      <span className="text-slate-400">{item.project}</span>
-                    </div>
-                    <div className="flex items-center space-x-4">
-                      <span className="text-slate-500">{item.duration}</span>
-                      <span className="font-mono text-green-400 font-bold">{item.cost}</span>
-                    </div>
+                {spaces.items.map((it, i) => (
+                  <div key={i} className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg border border-slate-700/50">
+                    <div className="min-w-0"><p className="text-sm font-bold text-slate-200 truncate">{it.name}</p><p className="text-[11px] text-slate-500"><span className="text-cyan-400 font-bold">{it.hardware}</span> · {it.duration}</p></div>
+                    <span className="font-mono text-oldgold-400 font-bold shrink-0 ml-3">${it.cost.toFixed(2)}</span>
                   </div>
                 ))}
               </div>
-            </div>
+            ) : <p className="text-sm text-slate-600 italic">Loading…</p>}
           </div>
 
-          {/* Configuration */}
-          <div className="space-y-6">
-            <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6">
-               <h2 className="text-lg font-bold mb-6">Auto-Shutdown</h2>
-               <div className="space-y-4">
-                  <label className="block">
-                    <span className="text-sm text-slate-400 mb-2 block">Inactivity Timer (Minutes)</span>
-                    <input 
-                      type="range" 
-                      min="5" 
-                      max="120" 
-                      step="5"
-                      value={sleepTimer}
-                      onChange={(e) => setSleepTimer(parseInt(e.target.value))}
-                      className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                    />
-                    <div className="flex justify-between text-[10px] text-slate-500 mt-2 font-bold">
-                      <span>5 MIN</span>
-                      <span>60 MIN</span>
-                      <span>120 MIN</span>
-                    </div>
-                  </label>
-                  <div className="p-4 bg-orange-500/10 border border-orange-500/20 rounded-xl">
-                    <p className="text-xs text-orange-400 leading-relaxed">
-                      Your GPU will automatically de-provision if no activity is detected for {sleepTimer} minutes. This is to strictly control cost.
-                    </p>
-                  </div>
-               </div>
+          {/* HF hardware tiers reference */}
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6">
+            <h2 className="text-lg font-bold mb-6 flex items-center space-x-2"><Gauge className="w-5 h-5 text-cyan-400" /><span>HF Spaces Hardware</span></h2>
+            <div className="space-y-2">
+              {HF_TIERS.map((t) => (
+                <div key={t.id} className="flex items-center justify-between p-3 bg-slate-900/40 rounded-lg border border-slate-700/40">
+                  <div className="flex items-center space-x-3"><div className="w-2 h-2 rounded-full bg-cyan-500" /><span className="font-bold text-sm">{t.name}</span><span className="text-[10px] text-slate-500">{t.vram}</span></div>
+                  <span className="text-sm font-mono text-slate-300">{t.price}</span>
+                </div>
+              ))}
             </div>
-
-            <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6">
-               <h2 className="text-lg font-bold mb-4">Hard Cost Cap</h2>
-               <div className="flex items-center justify-between p-3 bg-slate-900 rounded-lg mb-4">
-                  <span className="text-sm font-medium">Daily Limit</span>
-                  <span className="text-sm font-bold text-blue-400">$10.00</span>
-               </div>
-               <div className="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
-                  <div className="bg-blue-500 h-full w-[12%]" />
-               </div>
-               <p className="text-[10px] text-slate-500 mt-2">12.4% of daily quota used</p>
-            </div>
+            <a href="https://huggingface.co/docs/hub/spaces-gpus" target="_blank" rel="noopener noreferrer"
+              className="mt-4 w-full flex items-center justify-center space-x-2 bg-oldgold-500 hover:bg-oldgold-400 text-midnight-950 font-bold py-2.5 rounded-xl transition-all text-sm">
+              <span>Manage Space Hardware on HF</span><ExternalLink className="w-4 h-4" />
+            </a>
           </div>
         </div>
       </div>
-
-      {/* Provisioning Overlay */}
-      {isOverlayOpen && (
-        <div className="fixed inset-0 bg-slate-950/90 z-[100] flex items-center justify-center p-6">
-          <div className="bg-slate-800 border border-slate-700 rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl">
-            <div className="p-8 border-b border-slate-700">
-               <h2 className="text-2xl font-bold">Provision New GPU Resource</h2>
-               <p className="text-slate-400">Select your hardware and target project.</p>
-            </div>
-            
-            <div className="p-8 space-y-8">
-              <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4 block">1. Select Target Project</label>
-                <div className="grid grid-cols-2 gap-3">
-                  {projects.map(p => (
-                    <button 
-                      key={p}
-                      onClick={() => setSelectedProject(p)}
-                      className={`p-4 rounded-xl border text-left transition-all ${selectedProject === p ? 'bg-blue-600 border-blue-500' : 'bg-slate-900 border-slate-700 hover:border-slate-500'}`}
-                    >
-                      <span className="font-bold">{p}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4 block">2. Select GPU Hardware</label>
-                <div className="space-y-3">
-                   {gpuOptions.map(g => (
-                     <button 
-                       key={g.id}
-                       disabled={g.status === 'busy' || g.status === 'offline'}
-                       onClick={() => setSelectedGpu(g.id)}
-                       className={`w-full p-4 rounded-xl border flex items-center justify-between transition-all ${selectedGpu === g.id ? 'bg-blue-600 border-blue-500' : 'bg-slate-900 border-slate-700 hover:border-slate-500'} ${g.status !== 'available' ? 'opacity-50 cursor-not-allowed' : ''}`}
-                     >
-                       <div className="flex items-center space-x-4">
-                         <div className={`w-3 h-3 rounded-full ${g.status === 'available' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-slate-600'}`} />
-                         <span className="font-bold">{g.name}</span>
-                       </div>
-                       <div className="flex items-center space-x-4">
-                         <span className="text-sm font-mono">{g.price}</span>
-                         <ChevronRight className="w-4 h-4 opacity-50" />
-                       </div>
-                     </button>
-                   ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="p-8 bg-slate-900 flex items-center justify-end space-x-4">
-              <button 
-                onClick={() => setIsOverlayOpen(false)}
-                className="px-6 py-2 rounded-xl hover:bg-slate-800 text-slate-400 transition-colors"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={() => setIsOverlayOpen(false)}
-                className="px-8 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-all shadow-lg shadow-blue-900/40"
-              >
-                Start Provisioning
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

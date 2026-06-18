@@ -61,7 +61,7 @@ const ProjectManager: React.FC = () => {
   };
 
   return (
-    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 w-full max-w-lg px-4">
+    <div className="w-full">
       <div className="bg-slate-800/90 backdrop-blur-xl border border-slate-700 rounded-2xl shadow-2xl p-4">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center space-x-3">

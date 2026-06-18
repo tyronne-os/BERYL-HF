@@ -327,7 +327,7 @@ Always output strictly JSON."""
         # 5. Text-To-Speech (TTS)
         # Using a fast Parler-TTS model
         try:
-            tts_client = InferenceClient(model="parler-tts/parler-tts-mini-v1", token=HF_TOKEN)
+            tts_client = InferenceClient(model=VOICE_CONFIG["model"], token=HF_TOKEN)
             audio_bytes = tts_client.text_to_speech(result_payload["speech"])
             result_payload["audio_base64"] = base64.b64encode(audio_bytes).decode('utf-8')
         except Exception as tts_e:
@@ -345,28 +345,33 @@ async def chat(request: ChatRequest):
         model_name = request.model.replace("ollama/", "")
         
         async def ollama_event_generator():
+            collected = ""
+            prompt_text = " ".join(m.content for m in request.messages)
             try:
                 # Convert messages to Ollama format
                 ollama_msgs = [{"role": m.role, "content": m.content} for m in request.messages]
-                
+
                 # We use requests stream to proxy the Ollama response
                 response = requests.post(
                     "http://localhost:11434/api/chat",
                     json={"model": model_name, "messages": ollama_msgs, "stream": True},
                     stream=True
                 )
-                
+
                 for line in response.iter_lines():
                     if line:
                         data = json.loads(line)
                         if "message" in data and "content" in data["message"]:
                             content = data["message"]["content"]
                             if content:
+                                collected += content
                                 yield {"data": json.dumps({"content": content})}
                         if data.get("done"):
                             break
             except Exception as e:
                 yield {"data": json.dumps({"error": str(e)})}
+            finally:
+                _record_usage(request.model, prompt_text, collected)
                 
         return EventSourceResponse(ollama_event_generator())
     
@@ -374,6 +379,8 @@ async def chat(request: ChatRequest):
     client = InferenceClient(model=request.model, token=HF_TOKEN)
     
     async def event_generator():
+        collected = ""
+        prompt_text = " ".join(m.content for m in request.messages)
         try:
             for response in client.chat_completion(
                 messages=[{"role": m.role, "content": m.content} for m in request.messages],
@@ -382,9 +389,12 @@ async def chat(request: ChatRequest):
             ):
                 content = response.choices[0].delta.content
                 if content:
+                    collected += content
                     yield {"data": json.dumps({"content": content})}
         except Exception as e:
             yield {"data": json.dumps({"error": str(e)})}
+        finally:
+            _record_usage(request.model, prompt_text, collected)
 
     return EventSourceResponse(event_generator())
 
@@ -831,6 +841,212 @@ async def network_snapshot():
         return {"connections": conns or [], "count": len(conns or [])}
     except Exception as e:
         return {"connections": [], "count": 0, "error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════
+#  VOICE ENGINE CONFIG  (O.V.E)
+# ═══════════════════════════════════════════════════════
+VOICE_CONFIG = {"model": "parler-tts/parler-tts-mini-v1", "speed": 1.0}
+
+class VoiceConfig(BaseModel):
+    model: str = "parler-tts/parler-tts-mini-v1"
+    speed: float = 1.0
+
+@app.get("/voice/config")
+async def get_voice_config():
+    return VOICE_CONFIG
+
+@app.post("/voice/config")
+async def set_voice_config(cfg: VoiceConfig):
+    VOICE_CONFIG["model"] = cfg.model
+    VOICE_CONFIG["speed"] = cfg.speed
+    return {"status": "success", "config": VOICE_CONFIG}
+
+
+# ═══════════════════════════════════════════════════════
+#  LIVE SYSTEM TELEMETRY  (real CPU / RAM / GPU)
+# ═══════════════════════════════════════════════════════
+@app.get("/system/stats")
+async def system_stats():
+    """Real CPU, RAM and per-process telemetry via psutil (no WMI hang)."""
+    import psutil
+    vm = psutil.virtual_memory()
+    stats = {
+        "cpu_percent":  psutil.cpu_percent(interval=0.3),
+        "cpu_count":    psutil.cpu_count(logical=True),
+        "ram_used_gb":  round(vm.used / 1024**3, 2),
+        "ram_total_gb": round(vm.total / 1024**3, 2),
+        "ram_percent":  vm.percent,
+        "node_mem_gb":  0.0,
+        "py_mem_gb":    0.0,
+    }
+    node_sum = 0
+    py_sum = 0
+    for p in psutil.process_iter(['name', 'memory_info']):
+        try:
+            n = (p.info['name'] or '').lower()
+            mi = p.info['memory_info']
+            rss = mi.rss if mi else 0
+            if 'node' in n:
+                node_sum += rss
+            elif 'python' in n:
+                py_sum += rss
+        except Exception:
+            continue
+    stats["node_mem_gb"] = round(node_sum / 1024**3, 2)
+    stats["py_mem_gb"] = round(py_sum / 1024**3, 2)
+    return stats
+
+
+def _query_nvidia():
+    """Try nvidia-smi from PATH or known install dirs. Returns dict."""
+    candidates = ["nvidia-smi",
+                  r"C:\Windows\System32\nvidia-smi.exe",
+                  r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe"]
+    for exe in candidates:
+        try:
+            r = subprocess.run(
+                [exe, "--query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu,power.draw",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=6
+            )
+            if r.returncode != 0:
+                continue
+            gpus = []
+            for line in r.stdout.strip().splitlines():
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 6:
+                    used = float(parts[1] or 0)
+                    total = float(parts[2] or 0)
+                    gpus.append({
+                        "name": parts[0],
+                        "mem_used_mb": used,
+                        "mem_total_mb": total,
+                        "mem_percent": round((used / total) * 100, 1) if total else 0.0,
+                        "util_percent": float(parts[3] or 0),
+                        "temp_c": float(parts[4] or 0),
+                        "power_w": float(parts[5] or 0),
+                    })
+            if gpus:
+                return {"gpus": gpus, "available": True, "vendor": "NVIDIA"}
+        except (FileNotFoundError, Exception):
+            continue
+    return None
+
+
+@app.get("/system/gpu")
+async def system_gpu():
+    """Real GPU telemetry. NVIDIA via nvidia-smi; otherwise reports the real
+    local adapter name from the registry (no WMI hang)."""
+    nvidia = _query_nvidia()
+    if nvidia:
+        return nvidia
+    # No CUDA GPU — report the actual installed adapter from the registry
+    adapter = "Unknown Display Adapter"
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0000"
+        )
+        adapter, _ = winreg.QueryValueEx(key, "DriverDesc")
+        winreg.CloseKey(key)
+    except Exception:
+        pass
+    return {"gpus": [], "available": False, "vendor": "Integrated",
+            "adapter": adapter, "detail": "No CUDA GPU detected — integrated graphics"}
+
+
+# ═══════════════════════════════════════════════════════
+#  EMBEDDED TERMINAL  (real PowerShell execution)
+# ═══════════════════════════════════════════════════════
+class CliRequest(BaseModel):
+    command: str
+    cwd: Optional[str] = None
+
+@app.post("/cli/exec")
+async def cli_exec(req: CliRequest):
+    """Execute a real command in the user's PowerShell and stream back stdout/stderr."""
+    try:
+        cwd = req.cwd if req.cwd and os.path.isdir(req.cwd) else None
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", req.command],
+            capture_output=True, text=True, timeout=30, cwd=cwd
+        )
+        return {
+            "stdout": r.stdout,
+            "stderr": r.stderr,
+            "exit_code": r.returncode,
+            "cwd": cwd or os.getcwd(),
+        }
+    except subprocess.TimeoutExpired:
+        return {"stdout": "", "stderr": "Command timed out after 30s", "exit_code": 124, "cwd": req.cwd or os.getcwd()}
+    except Exception as e:
+        return {"stdout": "", "stderr": str(e), "exit_code": 1, "cwd": req.cwd or os.getcwd()}
+
+
+# ═══════════════════════════════════════════════════════
+#  TOKEN USAGE LEDGER  (real per-model accounting)
+# ═══════════════════════════════════════════════════════
+USAGE = {"by_model": {}, "session_start": None}
+
+def _approx_tokens(text: str) -> int:
+    # ~4 chars per token heuristic (no tokenizer dependency)
+    return max(1, len(text) // 4)
+
+def _record_usage(model: str, prompt_text: str, completion_text: str):
+    import time as _t
+    if USAGE["session_start"] is None:
+        USAGE["session_start"] = _t.time()
+    entry = USAGE["by_model"].setdefault(model, {"prompt": 0, "completion": 0, "calls": 0})
+    entry["prompt"] += _approx_tokens(prompt_text)
+    entry["completion"] += _approx_tokens(completion_text)
+    entry["calls"] += 1
+
+@app.get("/usage")
+async def get_usage():
+    import time as _t
+    total_prompt = sum(v["prompt"] for v in USAGE["by_model"].values())
+    total_completion = sum(v["completion"] for v in USAGE["by_model"].values())
+    elapsed_min = ((_t.time() - USAGE["session_start"]) / 60) if USAGE["session_start"] else 0
+    return {
+        "by_model": USAGE["by_model"],
+        "total_prompt": total_prompt,
+        "total_completion": total_completion,
+        "total": total_prompt + total_completion,
+        "calls": sum(v["calls"] for v in USAGE["by_model"].values()),
+        "elapsed_min": round(elapsed_min, 2),
+        "velocity_per_min": round((total_prompt + total_completion) / elapsed_min, 1) if elapsed_min > 0.05 else 0,
+    }
+
+
+# ═══════════════════════════════════════════════════════
+#  HF BILLING MIRROR
+#  HF exposes no public billing API — credits/usage live only
+#  in the authenticated dashboard. This is an editable, persisted
+#  mirror of the user's real figures, updatable from the UI.
+# ═══════════════════════════════════════════════════════
+_BILLING_PATH = os.path.join(os.path.dirname(__file__), "hf_billing.json")
+
+@app.get("/hf/billing")
+async def get_hf_billing():
+    try:
+        with open(_BILLING_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/hf/billing")
+async def set_hf_billing(request: Request):
+    try:
+        data = await request.json()
+        import datetime
+        data["last_updated"] = datetime.date.today().isoformat()
+        with open(_BILLING_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        return {"status": "success", "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

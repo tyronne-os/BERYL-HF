@@ -8,7 +8,7 @@ interface BottomNavProps {
 
 const BottomNav: React.FC<BottomNavProps> = ({ currentPage, setCurrentPage }) => {
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40">
+    <footer className="shrink-0 flex items-center justify-center py-2.5 bg-midnight-900 border-t border-midnight-800 z-40">
       <nav className="flex items-center bg-midnight-950/90 backdrop-blur-xl rounded-full p-1.5 border border-oldgold-500/30 shadow-[0_0_30px_rgba(212,175,55,0.15)]">
         <button
           onClick={() => setCurrentPage('comfy')}
@@ -48,7 +48,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ currentPage, setCurrentPage }) =>
           )}
         </button>
       </nav>
-    </div>
+    </footer>
   );
 };
 
