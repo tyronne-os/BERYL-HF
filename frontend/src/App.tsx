@@ -286,7 +286,7 @@ const App: React.FC = () => {
       )}
 
       {/* Global Voice Agent — right panel */}
-      <VoiceAgent onArtifactCreated={setCurrentArtifact} isOpen={isVoiceOpen} onClose={() => setIsVoiceOpen(false)} />
+      <VoiceAgent onArtifactCreated={setCurrentArtifact} isOpen={isVoiceOpen} onClose={() => setIsVoiceOpen(false)} currentArtifact={currentArtifact} />
 
       {/* Global Bottom Navigation Footer */}
       <BottomNav currentPage={currentPage} setCurrentPage={setCurrentPage} />

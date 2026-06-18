@@ -6,7 +6,10 @@ import threading
 import time
 import datetime
 import subprocess
+import re
+import uuid
 import pyautogui
+from collections import deque
 from PIL import Image
 from io import BytesIO
 from fastapi import FastAPI, HTTPException, Request
@@ -369,25 +372,25 @@ async def space_pause(req: OllamaPullRequest):
 
 @app.post("/voice/orchestrate")
 async def voice_orchestrate(
-    audio: UploadFile = File(None), 
-    text_fallback: str = Form(None)
+    audio: UploadFile = File(None),
+    text_fallback: str = Form(None),
+    session_id: str = Form(None),           # CORTEX: rolling memory key
+    current_canvas_html: str = Form(None),  # SCULPTOR: current canvas for patching
 ):
     """
-    Next-Gen Voice Orchestrator:
-    1. Transcribes incoming audio using Whisper-large-v3-turbo.
-    2. Captures local desktop vision state.
-    3. Routes via Qwen2.5-Coder to determine actions (PowerShell / UI Artifact).
-    4. Executes Admin actions locally.
-    5. Returns TTS response and/or React artifacts.
+    O.V.E Next-Gen Orchestrator — 5 Innovations:
+    CYCLOPS   (#1) Real multimodal vision — screenshot sent to LLM, thumbnail returned
+    CORTEX    (#2) Persistent rolling session memory (20-turn deque per session)
+    SPECTER   (#3) Wake-word handled on frontend; backend is always ready
+    CROSSHAIR (#4) computer_action returned with coordinates for click overlay
+    SCULPTOR  (#5) patch action type — LLM diffs existing canvas HTML
     """
     try:
+        # ── 1. STT ──────────────────────────────────────────────────────────
         instruction = text_fallback
-        
-        # 1. Audio Processing (STT)
         if audio and not text_fallback:
             try:
                 content = await audio.read()
-                # Use HF Inference API for Whisper STT
                 stt_client = InferenceClient(model="openai/whisper-large-v3-turbo", token=HF_TOKEN)
                 response = stt_client.automatic_speech_recognition(content)
                 instruction = response.text
@@ -395,79 +398,189 @@ async def voice_orchestrate(
                 print(f"STT Failed: {e}")
                 instruction = "Failed to transcribe audio."
 
-        # 2. Vision Capture
-        screenshot = pyautogui.screenshot()
-        buffered = BytesIO()
-        screenshot.save(buffered, format="JPEG", quality=70)
-        
-        # 3. LLM Orchestration (Logic + Powershell) — directed by MiniMax-M3
-        logic_client = InferenceClient(model=DEFAULT_MODEL, token=HF_TOKEN, provider="auto")
-        system_prompt = """You are O.V.E (Omniscient Voice Engine), an elite AI agent with FULL ADMIN access to a Windows 11 Lenovo device via PowerShell, and full access to the Beryl HF Canvas.
-You will receive user voice transcriptions. You must decide whether to:
-1. Execute a local system command (Respond ONLY with JSON format: {"type": "powershell", "command": "Get-Process"})
-2. Build a UI artifact (Respond ONLY with JSON format: {"type": "artifact", "title": "Dashboard", "code": "```html ... ```", "speech": "I have built the dashboard."})
-3. Answer conversationally (Respond ONLY with JSON format: {"type": "chat", "speech": "Your conversational response."})
-Always output strictly JSON as your final answer."""
+        if not instruction:
+            instruction = "Hello"
 
+        # ── 2. CYCLOPS — Vision Capture + Encode ────────────────────────────
+        vision_b64_full = None
+        vision_thumbnail_b64 = None
+        try:
+            screenshot = pyautogui.screenshot()
+            # Thumbnail (128×72) for VoiceAgent panel
+            thumb = screenshot.copy()
+            thumb.thumbnail((128, 72))
+            tb = BytesIO()
+            thumb.save(tb, format="JPEG", quality=60)
+            vision_thumbnail_b64 = base64.b64encode(tb.getvalue()).decode()
+            # Full vision (800px wide max) for LLM multimodal message
+            screenshot.thumbnail((800, 600))
+            fb = BytesIO()
+            screenshot.save(fb, format="JPEG", quality=70)
+            vision_b64_full = base64.b64encode(fb.getvalue()).decode()
+        except Exception as ve:
+            print(f"Vision capture failed: {ve}")
+
+        # ── 3. CORTEX — Session Memory ───────────────────────────────────────
+        if not session_id:
+            session_id = str(uuid.uuid4())
+        if session_id not in _ove_sessions:
+            _ove_sessions[session_id] = deque(maxlen=20)
+        session = _ove_sessions[session_id]
+
+        # ── 4. Build System Prompt (with SCULPTOR canvas context) ────────────
+        canvas_ctx = ""
+        if current_canvas_html and current_canvas_html.strip():
+            preview = current_canvas_html[:3000]
+            canvas_ctx = f"""
+
+Current Canvas HTML (you may patch it instead of rebuilding):
+```html
+{preview}
+```
+Prefer type=patch when the user wants to modify the existing canvas."""
+
+        system_prompt = f"""You are O.V.E (Omniscient Voice Engine) — an elite AI agent embedded in BERYL HF with FULL ADMIN access to a Windows 11 device via PowerShell and full control over the Beryl Canvas. You can see the user's live screen.
+
+Respond ONLY with ONE of these JSON formats (no markdown wrapper, raw JSON only):
+
+1. PowerShell command:
+   {{"type":"powershell","command":"Get-Process","speech":"Running that."}}
+
+2. Build new Canvas UI:
+   {{"type":"artifact","title":"My App","code":"<!DOCTYPE html>...full html...","speech":"Built it."}}
+
+3. Patch existing Canvas (SCULPTOR — preferred for edits):
+   {{"type":"patch","patches":[{{"selector":".btn","property":"background","value":"red"}},{{"selector":"#title","property":"textContent","value":"New Title"}}],"speech":"Updated."}}
+
+4. Computer use — click/type on screen (CROSSHAIR):
+   {{"type":"computer","action":"click","x":450,"y":300,"speech":"Clicking that now."}}
+
+5. Conversational reply:
+   {{"type":"chat","speech":"Your response here."}}
+
+You have vision — the current screen is attached as an image. Use it to answer questions about what's on screen, find UI elements to click, or understand context.{canvas_ctx}
+
+Always output raw valid JSON. No prose before or after."""
+
+        # ── 5. Assemble messages (history + multimodal user turn) ─────────────
+        user_content: list = [{"type": "text", "text": f"Voice command: {instruction}"}]
+        if vision_b64_full:
+            user_content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{vision_b64_full}"}
+            })
+
+        messages: list = [{"role": "system", "content": system_prompt}]
+        for turn in session:
+            messages.append(turn)
+        messages.append({"role": "user", "content": user_content})
+
+        # ── 6. LLM Orchestration ─────────────────────────────────────────────
+        logic_client = InferenceClient(model=DEFAULT_MODEL, token=HF_TOKEN, provider="auto")
         completion = logic_client.chat_completion(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"User Voice Input: {instruction}"},
-            ],
+            messages=messages,
             max_tokens=6000,
             temperature=0.1,
         )
         llm_response = completion.choices[0].message.content or ""
-        
-        # 4. Parse & Execute
-        import re
+
+        # ── 7. Parse & Execute ────────────────────────────────────────────────
         json_match = re.search(r'\{[\s\S]*\}', llm_response)
-        
-        result_payload = {
+
+        result_payload: dict = {
             "transcription": instruction,
             "speech": "Action complete.",
             "artifact": None,
-            "shell_output": None
+            "patches": None,
+            "shell_output": None,
+            "computer_action": None,
+            "session_id": session_id,
+            "vision_thumbnail_b64": vision_thumbnail_b64,
+            "audio_base64": None,
         }
 
         if json_match:
             try:
                 action = json.loads(json_match.group())
-                
-                if action.get("type") == "powershell":
-                    cmd = action.get("command")
-                    proc = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True, timeout=10)
-                    result_payload["shell_output"] = proc.stdout[:1000] if proc.stdout else proc.stderr[:1000]
-                    result_payload["speech"] = f"I have executed the command: {cmd[:20]}."
-                    
-                elif action.get("type") == "artifact":
-                    html_match = re.search(r'```html\n([\s\S]*?)```', action.get("code", ""))
-                    code = html_match.group(1) if html_match else action.get("code", "")
-                    result_payload["artifact"] = {"type": "html", "title": action.get("title", "Voice Generated Artifact"), "content": code}
-                    result_payload["speech"] = action.get("speech", "I have generated the UI artifact in the canvas.")
-                    
-                elif action.get("type") == "chat":
-                    result_payload["speech"] = action.get("speech", "Acknowledged.")
-                    
-            except Exception as parse_e:
-                result_payload["speech"] = f"I understood the request but failed to parse my own execution plan: {parse_e}"
-        else:
-             result_payload["speech"] = "I could not determine the correct action format."
+                atype = action.get("type", "chat")
+                result_payload["speech"] = action.get("speech", "Done.")
 
-        # 5. Text-To-Speech (TTS)
-        # Using a fast Parler-TTS model
+                if atype == "powershell":
+                    cmd = action.get("command", "")
+                    proc = subprocess.run(
+                        ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
+                        capture_output=True, text=True, timeout=15
+                    )
+                    result_payload["shell_output"] = (proc.stdout or proc.stderr or "")[:2000]
+
+                elif atype == "artifact":
+                    raw_code = action.get("code", "")
+                    html_match = re.search(r'```html\n([\s\S]*?)```', raw_code)
+                    code = html_match.group(1) if html_match else raw_code
+                    result_payload["artifact"] = {
+                        "type": "html",
+                        "title": action.get("title", "O.V.E Artifact"),
+                        "content": code,
+                    }
+
+                elif atype == "patch":
+                    # SCULPTOR — return patches array; frontend applies to existing canvas DOM
+                    result_payload["patches"] = action.get("patches", [])
+
+                elif atype == "computer":
+                    # CROSSHAIR — execute then return coordinates for frontend overlay
+                    act = action.get("action", "")
+                    x, y = action.get("x"), action.get("y")
+                    if act == "click" and x is not None and y is not None:
+                        pyautogui.click(int(x), int(y))
+                        result_payload["computer_action"] = {"type": "click", "x": int(x), "y": int(y)}
+                    elif act == "type":
+                        text_to_type = action.get("text", "")
+                        pyautogui.write(text_to_type, interval=0.03)
+                        result_payload["computer_action"] = {"type": "type", "text": text_to_type}
+                    elif act == "move" and x is not None and y is not None:
+                        pyautogui.moveTo(int(x), int(y))
+                        result_payload["computer_action"] = {"type": "move", "x": int(x), "y": int(y)}
+                    elif act == "scroll":
+                        pyautogui.scroll(action.get("clicks", 3))
+                        result_payload["computer_action"] = {"type": "scroll", "clicks": action.get("clicks", 3)}
+
+            except Exception as parse_e:
+                result_payload["speech"] = f"Understood the request but failed to execute: {parse_e}"
+        else:
+            # LLM returned prose instead of JSON — use it as chat
+            result_payload["speech"] = llm_response[:600] if llm_response else "Could not determine action."
+
+        # ── 8. CORTEX — Persist turn to session ───────────────────────────────
+        session.append({"role": "user", "content": instruction})
+        session.append({"role": "assistant", "content": result_payload["speech"]})
+
+        # ── 9. TTS ────────────────────────────────────────────────────────────
         try:
             tts_client = InferenceClient(model=VOICE_CONFIG["model"], token=HF_TOKEN)
             audio_bytes = tts_client.text_to_speech(result_payload["speech"])
-            result_payload["audio_base64"] = base64.b64encode(audio_bytes).decode('utf-8')
+            result_payload["audio_base64"] = base64.b64encode(audio_bytes).decode()
         except Exception as tts_e:
             print(f"TTS Failed: {tts_e}")
-            result_payload["audio_base64"] = None
 
         return result_payload
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/voice/session/{session_id}")
+async def clear_voice_session(session_id: str):
+    """Clear O.V.E conversation memory for a session."""
+    _ove_sessions.pop(session_id, None)
+    return {"status": "cleared", "session_id": session_id}
+
+
+@app.get("/voice/session/{session_id}")
+async def get_voice_session(session_id: str):
+    """Get conversation history for a session."""
+    turns = list(_ove_sessions.get(session_id, []))
+    return {"session_id": session_id, "turns": len(turns) // 2, "history": turns}
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
@@ -1361,6 +1474,9 @@ async def update_daemon_config(cfg: DaemonConfig):
 #  VOICE ENGINE CONFIG  (O.V.E)
 # ═══════════════════════════════════════════════════════
 VOICE_CONFIG = {"model": "parler-tts/parler-tts-mini-v1", "speed": 1.0}
+
+# CORTEX — rolling session memory (session_id → deque of {role, content} turns)
+_ove_sessions: Dict[str, deque] = {}
 
 class VoiceConfig(BaseModel):
     model: str = "parler-tts/parler-tts-mini-v1"
