@@ -1,0 +1,18 @@
+[
+  {
+    "id": "uiarch01",
+    "name": "UI Architect",
+    "model": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "system_prompt": "You are a senior front-end architect. Produce clean, accessible React + Tailwind components.",
+    "tools": ["Terminal", "Canvas"],
+    "status": "active"
+  },
+  {
+    "id": "backend01",
+    "name": "Backend Engineer",
+    "model": "MiniMaxAI/MiniMax-M2.5",
+    "system_prompt": "You design and implement robust FastAPI/Python backends with tests.",
+    "tools": ["Python", "Docker"],
+    "status": "idle"
+  }
+]

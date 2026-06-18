@@ -1049,6 +1049,87 @@ async def set_hf_billing(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ═══════════════════════════════════════════════════════
+#  COMFYUI BRIDGE  (real proxy to a running ComfyUI on :8188)
+# ═══════════════════════════════════════════════════════
+COMFY_URL = "http://127.0.0.1:8188"
+
+@app.get("/comfy/status")
+async def comfy_status():
+    try:
+        r = requests.get(f"{COMFY_URL}/system_stats", timeout=2)
+        if r.status_code == 200:
+            return {"online": True, "url": COMFY_URL, "stats": r.json()}
+    except Exception:
+        pass
+    return {"online": False, "url": COMFY_URL}
+
+@app.get("/comfy/queue")
+async def comfy_queue():
+    try:
+        r = requests.get(f"{COMFY_URL}/queue", timeout=2)
+        return r.json()
+    except Exception as e:
+        return {"error": str(e), "queue_running": [], "queue_pending": []}
+
+@app.get("/comfy/models")
+async def comfy_models():
+    """Real checkpoint list from a running ComfyUI."""
+    try:
+        r = requests.get(f"{COMFY_URL}/object_info/CheckpointLoaderSimple", timeout=4)
+        data = r.json()
+        ckpts = data["CheckpointLoaderSimple"]["input"]["required"]["ckpt_name"][0]
+        return {"checkpoints": ckpts}
+    except Exception as e:
+        return {"checkpoints": [], "error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════
+#  AGENT STUDIO  (real persisted agent definitions)
+# ═══════════════════════════════════════════════════════
+_AGENTS_PATH = os.path.join(os.path.dirname(__file__), "agents.json")
+
+def _load_agents():
+    try:
+        with open(_AGENTS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def _save_agents(agents):
+    with open(_AGENTS_PATH, "w", encoding="utf-8") as f:
+        json.dump(agents, f, indent=2)
+
+class AgentDef(BaseModel):
+    id: Optional[str] = None
+    name: str
+    model: str
+    system_prompt: str = ""
+    tools: List[str] = []
+    status: str = "idle"
+
+@app.get("/agents")
+async def list_agents():
+    return {"agents": _load_agents()}
+
+@app.post("/agents")
+async def create_agent(agent: AgentDef):
+    agents = _load_agents()
+    agent.id = agent.id or uuid.uuid4().hex[:8]
+    data = agent.dict()
+    # replace if id exists, else append
+    agents = [a for a in agents if a.get("id") != agent.id]
+    agents.append(data)
+    _save_agents(agents)
+    return {"status": "success", "agent": data}
+
+@app.delete("/agents/{agent_id}")
+async def delete_agent(agent_id: str):
+    agents = [a for a in _load_agents() if a.get("id") != agent_id]
+    _save_agents(agents)
+    return {"status": "success", "remaining": len(agents)}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8001)
