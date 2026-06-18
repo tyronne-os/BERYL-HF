@@ -9,3 +9,4 @@ pydantic
 sse-starlette
 PyGithub
 psutil
+pydivert

@@ -5,9 +5,10 @@ import {
   AlertTriangle, CheckCircle2, Clock, Activity, Zap,
   Search, XCircle, Crosshair, Skull, Wifi, Terminal,
   MonitorX, Bomb, Bug, ScanSearch, RefreshCw, ToggleLeft, ToggleRight,
-  Brain, FileText, Server, List,
+  Brain, FileText, Server, List, Flame,
 } from 'lucide-react';
 import { API } from '../api';
+import FirewallPanel from './FirewallPanel';
 
 interface Posture {
   established: number; listeners: number; remote_ips: number; rat_listeners: number;
@@ -33,7 +34,7 @@ type AgentName    = 'SENTINEL' | 'GUARD' | 'JAILER' | 'WARDEN';
 type EventSev     = 'BLOCKED' | 'INTERCEPTED' | 'SANITIZED' | 'QUARANTINED'
                   | 'DETECTED' | 'CLEARED' | 'FLAGGED' | 'LOCKED' | 'SEALED';
 type ThreatLevel  = 'NOMINAL' | 'ELEVATED' | 'HIGH' | 'CRITICAL';
-type Mode         = 'watch' | 'sweep' | 'daemon';
+type Mode         = 'watch' | 'sweep' | 'daemon' | 'firewall';
 type SweepPhase   = 'idle' | 'scanning' | 'done';
 type LogType      = 'info' | 'scan' | 'threat' | 'clear' | 'kill' | 'terminated' | 'error';
 
@@ -892,6 +893,19 @@ const GenSherman: React.FC = () => {
                 </span>
               )}
             </button>
+            <button
+              onClick={() => setMode('firewall')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer ${
+                mode === 'firewall' ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'text-slate-600 hover:text-slate-400'
+              }`}
+            >
+              <Flame className="w-3 h-3" />
+              FIREWALL
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-red-500" />
+              </span>
+            </button>
           </div>
 
           <div className="h-8 w-px bg-midnight-800" />
@@ -948,7 +962,7 @@ const GenSherman: React.FC = () => {
       </div>
 
       {/* ── Body: WATCH or SWEEP ── */}
-      {mode === 'daemon' ? renderDaemon() : mode === 'watch' ? (
+      {mode === 'firewall' ? <FirewallPanel /> : mode === 'daemon' ? renderDaemon() : mode === 'watch' ? (
         <div className="flex flex-1 overflow-hidden">
           {/* 2×2 Agent Grid */}
           <div className="flex-1 flex flex-col overflow-hidden">

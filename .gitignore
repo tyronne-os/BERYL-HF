@@ -21,6 +21,12 @@ dist/
 backend.log
 vite.log
 
+# GEN SHERMAN runtime data (machine-specific)
+backend/sherman_log.jsonl
+backend/firewall_log.jsonl
+backend/banned_ips.json
+start_sherman_bg.bat
+
 # OS
 .DS_Store
 Thumbs.db

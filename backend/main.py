@@ -1294,6 +1294,27 @@ def _sherman_daemon_worker() -> None:
                             _daemon_append_log("CLEAR", "Full sweep complete — system clean")
                 except Exception as ex:
                     _daemon_append_log("ERROR", f"Sweep error: {ex}")
+
+                # Firewall: brute-force + connection surge scan on every full cycle
+                try:
+                    import firewall_engine as _fw
+                    bf_events = _fw.check_brute_force_events()
+                    newly_banned = _fw.process_brute_force(bf_events)
+                    surge_ips = _fw.check_connection_surge()
+                    for sip in surge_ips:
+                        _fw.block_ip(sip, "connection_surge")
+                    if newly_banned:
+                        _daemon_append_log("FW-BAN", f"Auto-banned {len(newly_banned)} IP(s): {', '.join(newly_banned)}")
+                        _notify_windows(
+                            "GEN SHERMAN — BRUTE FORCE BLOCKED",
+                            f"Banned {len(newly_banned)} attacking IP(s): {', '.join(newly_banned[:3])}",
+                            "WARNING",
+                        )
+                    if surge_ips:
+                        _daemon_append_log("FW-BAN", f"Surge-blocked {len(surge_ips)} IP(s): {', '.join(surge_ips)}")
+                except Exception as fw_ex:
+                    _daemon_append_log("ERROR", f"Firewall scan error: {fw_ex}")
+
                 last_full_sweep = now
 
         except Exception as ex:
@@ -1306,6 +1327,11 @@ def _sherman_daemon_worker() -> None:
 async def start_sherman_daemon() -> None:
     t = threading.Thread(target=_sherman_daemon_worker, daemon=True, name="gen-sherman")
     t.start()
+    # Init firewall engine (loads ban DB, re-applies persistent bans, starts pydivert)
+    import firewall_engine as fw
+    fw.init()
+    # Start the firewall snapshot refresher (keeps /firewall/status instant)
+    threading.Thread(target=_fw_snapshot_worker, daemon=True, name="fw-snapshot").start()
 
 
 @app.get("/security/daemon/status")
@@ -1616,6 +1642,141 @@ async def delete_agent(agent_id: str):
     agents = [a for a in _load_agents() if a.get("id") != agent_id]
     _save_agents(agents)
     return {"status": "success", "remaining": len(agents)}
+
+
+# ═══════════════════════════════════════════════════════
+#  GEN SHERMAN — FIREWALL API
+#  Powered by netsh advfirewall (persistent rules) +
+#  pydivert/WinDivert (real-time packet layer)
+#  GitHub: https://github.com/ffalcinelli/pydivert
+#
+#  PERF: every endpoint that touches netsh is a *sync* def so
+#  FastAPI runs it in a threadpool — slow netsh calls never
+#  block the event loop or the 24/7 daemon. /firewall/status
+#  and /firewall/blocked are served from a background-refreshed
+#  snapshot, so the UI poll returns instantly.
+# ═══════════════════════════════════════════════════════
+import firewall_engine as fw
+
+class FwBlockReq(BaseModel):
+    ip: str
+    reason: Optional[str] = "manual"
+
+class FwPortReq(BaseModel):
+    port: int
+    protocol: Optional[str] = "TCP"
+
+# ── Snapshot cache (refreshed by background thread) ──────────────────────────
+_fw_snapshot: dict = {
+    "status":  {"default_block_inbound": False, "divert_active": False,
+                "blocked_ip_count": 0, "total_bans_ever": 0,
+                "log_entries": 0, "safe_ports": []},
+    "profiles": {"domain": {"on": True, "policy": "warming"},
+                 "private": {"on": True, "policy": "warming"},
+                 "public":  {"on": True, "policy": "warming"},
+                 "default_block": False},
+    "blocked": [],
+    "ts": None,
+}
+
+def _fw_snapshot_worker() -> None:
+    """Background refresh. Fast in-memory parts every 10s; slow netsh
+    profile + rule reconciliation every 60s. Never blocks request handlers."""
+    last_slow = 0.0
+    while True:
+        try:
+            # Fast (in-memory only)
+            _fw_snapshot["status"]  = fw.get_status()
+            _fw_snapshot["blocked"] = fw.get_banned_list()
+            # Slow (netsh) — only once a minute
+            now = time.time()
+            if (now - last_slow) >= 60:
+                _fw_snapshot["profiles"] = fw.get_firewall_profiles()  # cached 30s inside engine
+                fw.get_blocked_ips()  # reconcile DB <-> live rules in background
+                last_slow = now
+            _fw_snapshot["ts"] = datetime.datetime.now().isoformat(timespec="seconds")
+        except Exception:
+            pass
+        time.sleep(10)
+
+@app.get("/firewall/status")
+def firewall_status():
+    # Instant — served from the background-refreshed snapshot (no netsh on request path)
+    return {**_fw_snapshot["profiles"], **_fw_snapshot["status"], "snapshot_ts": _fw_snapshot["ts"]}
+
+@app.get("/firewall/blocked")
+def firewall_blocked():
+    # Instant — in-memory ban DB (no netsh)
+    return {"blocked": fw.get_banned_list()}
+
+@app.get("/firewall/blocked/live")
+def firewall_blocked_live():
+    # Forces a fresh netsh read (sync def -> threadpool, won't block loop)
+    blocked = fw.get_blocked_ips()
+    _fw_snapshot["blocked"] = blocked
+    return {"blocked": blocked}
+
+def _refresh_fw_fast() -> None:
+    """Update the fast (in-memory) parts of the snapshot immediately."""
+    _fw_snapshot["blocked"] = fw.get_banned_list()
+    _fw_snapshot["status"]  = fw.get_status()
+
+@app.post("/firewall/block")
+def firewall_block(req: FwBlockReq):
+    ok = fw.block_ip(req.ip, req.reason or "manual")
+    _refresh_fw_fast()
+    return {"status": "blocked" if ok else "error", "ip": req.ip}
+
+@app.post("/firewall/unblock")
+def firewall_unblock(req: FwBlockReq):
+    ok = fw.unblock_ip(req.ip)
+    _refresh_fw_fast()
+    return {"status": "unblocked" if ok else "error", "ip": req.ip}
+
+@app.post("/firewall/block_all_inbound")
+def firewall_block_all_inbound():
+    ok = fw.enable_default_block_inbound()
+    return {"status": "enabled" if ok else "error",
+            "note": "All inbound blocked except whitelisted BERYL ports"}
+
+@app.post("/firewall/allow_inbound")
+def firewall_allow_inbound():
+    ok = fw.disable_default_block_inbound()
+    return {"status": "restored" if ok else "error"}
+
+@app.post("/firewall/allow_port")
+def firewall_allow_port(req: FwPortReq):
+    ok = fw.allow_port_inbound(req.port, req.protocol or "TCP")
+    return {"status": "added" if ok else "error", "port": req.port}
+
+@app.get("/firewall/logs")
+def firewall_logs(limit: int = 100):
+    return {"logs": fw.get_log(limit)}
+
+@app.get("/firewall/scan_brute_force")
+def firewall_scan_brute_force():
+    events = fw.check_brute_force_events()
+    newly_banned = fw.process_brute_force(events)
+    if newly_banned:
+        _fw_snapshot["blocked"] = fw.get_banned_list()
+    return {
+        "events":      events,
+        "total_ips":   len(events),
+        "newly_banned": newly_banned,
+        "auto_banned": len(newly_banned),
+    }
+
+@app.get("/firewall/scan_surge")
+def firewall_scan_surge():
+    surge_ips = fw.check_connection_surge()
+    newly_banned = []
+    for ip in surge_ips:
+        ok = fw.block_ip(ip, "connection_surge")
+        if ok:
+            newly_banned.append(ip)
+    if newly_banned:
+        _fw_snapshot["blocked"] = fw.get_banned_list()
+    return {"surge_ips": surge_ips, "banned": newly_banned}
 
 
 if __name__ == "__main__":
