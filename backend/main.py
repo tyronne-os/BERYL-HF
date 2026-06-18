@@ -214,6 +214,32 @@ async def get_trending_models():
         print(f"Error in get_trending_models: {e}")
         return {"text": []}
 
+@app.get("/trending/gguf")
+async def get_trending_gguf():
+    """Trending GGUF models from Hugging Face — used by HFPage GGUF tab (12h client cache)."""
+    try:
+        api = HfApi(token=HF_TOKEN)
+        models = list(api.list_models(filter="gguf", sort="downloads", limit=30))
+        result = []
+        for m in models:
+            if not m.modelId:
+                continue
+            author = getattr(m, 'author', m.modelId.split('/')[0] if '/' in m.modelId else m.modelId)
+            tags = list(getattr(m, 'tags', []) or [])
+            downloads = getattr(m, 'downloads', 0) or 0
+            likes = getattr(m, 'likes', 0) or 0
+            result.append({
+                "id": m.modelId,
+                "author": author,
+                "tags": tags,
+                "downloads": downloads,
+                "likes": likes,
+            })
+        return {"models": result}
+    except Exception as e:
+        print(f"Error in get_trending_gguf: {e}")
+        return {"models": []}
+
 @app.get("/spaces")
 async def get_trending_spaces():
     try:

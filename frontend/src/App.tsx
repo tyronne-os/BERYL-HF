@@ -22,7 +22,6 @@ import GPUManager from './components/GPUManager';
 import ProjectManager from './components/ProjectManager';
 import AgentStudio from './components/AgentStudio';
 import CLIDashboard from './components/CLIDashboard';
-import CompactHub from './components/CompactHub';
 import OllamaMirror from './components/OllamaMirror';
 import LivingDoc from './components/LivingDoc';
 import VoiceAgent from './components/VoiceAgent';
@@ -30,7 +29,7 @@ import ComfyUIMirror from './components/ComfyUIMirror';
 import FlipMode from './components/FlipMode';
 import GenSherman from './components/GenSherman';
 import BottomNav from './components/BottomNav';
-import { Settings, Monitor, Zap, MessageSquare, Cpu, Wand2, TerminalSquare, BookOpen, Minimize2, Server, FolderOpen, X, Sparkles } from 'lucide-react';
+import { Settings, Monitor, Zap, MessageSquare, Cpu, Wand2, TerminalSquare, BookOpen, FolderOpen, X, Sparkles } from 'lucide-react';
 
 const App: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState('MiniMaxAI/MiniMax-M3');
@@ -40,7 +39,7 @@ const App: React.FC = () => {
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [isFileMenuOpen, setIsFileMenuOpen] = useState(false);
   const [isVoiceOpen, setIsVoiceOpen] = useState(true);
-  const [currentPage, setCurrentPage] = useState<'chat' | 'hf' | 'gpu' | 'studio' | 'cli' | 'docs' | 'compact' | 'ollama' | 'comfy' | 'fliip' | 'sherman'>('chat');
+  const [currentPage, setCurrentPage] = useState<'chat' | 'hf' | 'gpu' | 'studio' | 'cli' | 'docs' | 'ollama' | 'comfy' | 'fliip' | 'sherman'>('chat');
 
   const handleAddModel = (modelId: string) => {
     const author = modelId.split('/')[0];
@@ -77,8 +76,6 @@ const App: React.FC = () => {
         return <HFPage onAddModel={handleAddModel} />;
       case 'gpu':
         return <GPUManager />;
-      case 'compact':
-        return <CompactHub />;
       case 'ollama':
         return <OllamaMirror onSelectModel={setSelectedModel} navigateTo={setCurrentPage} />;
       case 'comfy':
@@ -141,34 +138,12 @@ const App: React.FC = () => {
             <TerminalSquare className="w-3.5 h-3.5" />
             <span>CLI</span>
           </button>
-          <button 
-            onClick={() => setCurrentPage('compact')}
-            className={`nav-flash px-3 py-1 rounded-md text-[11px] font-bold transition-all flex items-center space-x-2 ${currentPage === 'compact' ? 'bg-oldgold-500 text-midnight-950 shadow-[0_0_15px_rgba(212,175,55,0.4)]' : 'text-slate-400 hover:text-oldgold-400 hover:bg-midnight-800'}`}
-          >
-            <Minimize2 className="w-3.5 h-3.5" />
-            <span>COMPACT</span>
-          </button>
-          <button 
-            onClick={() => setCurrentPage('ollama')}
-            className={`nav-flash px-3 py-1 rounded-md text-[11px] font-bold transition-all flex items-center space-x-2 ${currentPage === 'ollama' ? 'bg-oldgold-500 text-midnight-950 shadow-[0_0_15px_rgba(212,175,55,0.4)]' : 'text-slate-400 hover:text-oldgold-400 hover:bg-midnight-800'}`}
-          >
-            <Server className="w-3.5 h-3.5" />
-            <span>OLLAMA</span>
-          </button>
-          <button 
+          <button
             onClick={() => setCurrentPage('docs')}
             className={`nav-flash px-3 py-1 rounded-md text-[11px] font-bold transition-all flex items-center space-x-2 ${currentPage === 'docs' ? 'bg-oldgold-500 text-midnight-950 shadow-[0_0_15px_rgba(212,175,55,0.4)]' : 'text-slate-400 hover:text-oldgold-400 hover:bg-midnight-800'}`}
           >
             <BookOpen className="w-3.5 h-3.5" />
             <span>DOCS</span>
-          </button>
-          <div className="h-4 w-px bg-midnight-800 mx-1"></div>
-          <button
-            onClick={() => setCurrentPage('hf')}
-            className={`nav-flash px-3 py-1 rounded-md text-[11px] font-bold transition-all flex items-center space-x-2 ${currentPage === 'hf' ? 'bg-oldgold-500 text-midnight-950 shadow-[0_0_15px_rgba(212,175,55,0.4)]' : 'text-slate-400 hover:text-oldgold-400 hover:bg-midnight-800'}`}
-          >
-            <span className="text-[13px]">🤗</span>
-            <span>HF</span>
           </button>
           <button
             onClick={() => setCurrentPage('gpu')}
@@ -176,6 +151,21 @@ const App: React.FC = () => {
           >
             <Cpu className="w-3.5 h-3.5" />
             <span>GPU</span>
+          </button>
+          <div className="h-4 w-px bg-midnight-800 mx-1"></div>
+          <button
+            onClick={() => setCurrentPage('ollama')}
+            className={`nav-flash px-3 py-1 rounded-md text-[11px] font-bold transition-all flex items-center space-x-2 ${currentPage === 'ollama' ? 'bg-oldgold-500 text-midnight-950 shadow-[0_0_15px_rgba(212,175,55,0.4)]' : 'text-slate-400 hover:text-oldgold-400 hover:bg-midnight-800'}`}
+          >
+            <span className="text-[13px]">🦙</span>
+            <span>OLLAMA</span>
+          </button>
+          <button
+            onClick={() => setCurrentPage('hf')}
+            className={`nav-flash px-3 py-1 rounded-md text-[11px] font-bold transition-all flex items-center space-x-2 ${currentPage === 'hf' ? 'bg-oldgold-500 text-midnight-950 shadow-[0_0_15px_rgba(212,175,55,0.4)]' : 'text-slate-400 hover:text-oldgold-400 hover:bg-midnight-800'}`}
+          >
+            <span className="text-[13px]">🤗</span>
+            <span>HF</span>
           </button>
         </nav>
 

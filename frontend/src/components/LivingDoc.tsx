@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { BookOpen, Terminal, Cpu, Wand2, ArrowRight, Image as ImageIcon, CheckCircle, Zap, Shield, Rocket, Minimize2, FolderGit2, ShieldAlert, Server, Mic, Sparkles, Flame } from 'lucide-react';
+import { BookOpen, Terminal, Cpu, Wand2, ArrowRight, Image as ImageIcon, CheckCircle, Zap, Shield, Rocket, Minimize2, FolderGit2, ShieldAlert, Server, Mic, Sparkles, Flame, Package } from 'lucide-react';
 
 interface LivingDocProps {
   navigateTo: (page: string) => void;
@@ -617,6 +617,125 @@ npx -y @modelcontextprotocol/server-sqlite --db-path ./local.db
             <p><strong>6. Magnitude Pruning:</strong> Sparsify weights to radically increase inference speed.</p>
             <p><strong>7. Synthetic Generation:</strong> Auto-expand your dataset using Qwen-powered synthetic agents.</p>
             <p className="italic mt-4 text-slate-500">...and 13 other advanced pipeline controls documented in the FLIIP MODE GUI.</p>
+          </div>
+        </div>
+      )
+    },
+    {
+      id: 'model-discovery',
+      title: '13. Model Discovery Hub',
+      icon: <Package className="w-4 h-4" />,
+      content: (
+        <div className="space-y-6">
+          <h1 className="text-4xl font-extrabold tracking-tight text-white mb-4">Model Discovery Hub</h1>
+          <p className="text-lg text-slate-300 leading-relaxed">
+            The <strong className="text-white">🤗 HF</strong> and <strong className="text-white">🦙 OLLAMA</strong> pages form your unified model discovery and deployment pipeline.
+            Find a model you like, click one button, and it's live in your chat dropdown — no config required.
+          </p>
+
+          {/* Nav layout */}
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6">
+            <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><Zap className="w-5 h-5 text-oldgold-400" /> Current Nav Layout</h3>
+            <div className="flex flex-wrap gap-2 text-xs font-mono mb-4">
+              {['CHAT','AGENTS','CLI','DOCS','GPU','|','🦙 OLLAMA','🤗 HF'].map((item, i) => (
+                <span key={i} className={`px-2 py-1 rounded font-bold ${item === '|' ? 'text-slate-600' : 'bg-midnight-900 border border-midnight-700 text-slate-300'}`}>{item}</span>
+              ))}
+            </div>
+            <p className="text-xs text-slate-500">OLLAMA and HF are grouped together after the separator — the two model-discovery portals sit side by side for fast switching.</p>
+          </div>
+
+          {/* HF Page */}
+          <h3 className="text-2xl font-bold text-white mt-8 mb-3">🤗 HF Page — Three Tabs</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div className="bg-slate-800 border border-oldgold-500/30 rounded-xl p-5">
+              <div className="text-2xl mb-2">🤖</div>
+              <h4 className="font-bold text-white mb-1">MODELS</h4>
+              <p className="text-sm text-slate-400">HF Trending models (top downloads). Each card has a permanent <strong className="text-oldgold-400">Load in Chat</strong> button that swaps your active model immediately and navigates to the Chat page.</p>
+              <p className="text-[10px] text-slate-500 mt-2 font-mono">Cache key: hf_trending_models · 12h TTL</p>
+            </div>
+            <div className="bg-slate-800 border border-purple-500/30 rounded-xl p-5">
+              <div className="text-2xl mb-2">🚀</div>
+              <h4 className="font-bold text-white mb-1">SPACES</h4>
+              <p className="text-sm text-slate-400">Trending HF Spaces. Click any card to open it in an embedded iframe viewer. External link opens the full space in your browser.</p>
+              <p className="text-[10px] text-slate-500 mt-2 font-mono">Cache key: hf_trending_spaces · 12h TTL</p>
+            </div>
+            <div className="bg-slate-800 border border-emerald-500/30 rounded-xl p-5">
+              <div className="text-2xl mb-2">📦</div>
+              <h4 className="font-bold text-white mb-1">GGUF</h4>
+              <p className="text-sm text-slate-400">Trending GGUF quantized models. Dual-action cards: <strong className="text-oldgold-400">Chat</strong> loads via HF Inference · <strong className="text-emerald-400">🦙 Pull</strong> downloads to Ollama AND registers in the model selector.</p>
+              <p className="text-[10px] text-slate-500 mt-2 font-mono">Cache key: hf_trending_gguf · 12h TTL · Backend: /trending/gguf</p>
+            </div>
+          </div>
+
+          {/* GGUF pull flow */}
+          <div className="bg-emerald-900/20 border border-emerald-500/30 rounded-2xl p-6">
+            <h4 className="text-lg font-bold text-emerald-400 mb-3 flex items-center gap-2"><Package className="w-5 h-5" /> GGUF Pull Flow</h4>
+            <div className="space-y-3 text-sm">
+              {[
+                ['1', 'User clicks 🦙 Pull on a GGUF card', 'text-slate-300'],
+                ['2', 'Frontend calls POST /ollama/pull with name: "hf.co/{author}/{repo}"', 'text-slate-400 font-mono text-xs'],
+                ['3', 'Ollama daemon streams the download in background (check 🦙 OLLAMA tab for progress)', 'text-slate-300'],
+                ['4', 'Model is registered in the model selector as ollama/{name} immediately', 'text-oldgold-400 font-bold'],
+                ['5', 'User can now select it from the dropdown and start chatting — no page reload needed', 'text-emerald-400'],
+              ].map(([n, text, cls]) => (
+                <div key={n} className="flex items-start gap-3">
+                  <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-black flex items-center justify-center shrink-0 mt-0.5">{n}</span>
+                  <p className={cls}>{text}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* OLLAMA page */}
+          <h3 className="text-2xl font-bold text-white mt-8 mb-3">🦙 OLLAMA Page</h3>
+          <p className="text-slate-300 leading-relaxed mb-4">
+            Mirrors the ollama.com aesthetic. Shows your locally installed Ollama models with live daemon status, disk usage, and capability tags (vision/code/embedding/tools).
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+              <h4 className="font-bold text-white mb-2">Pull Box</h4>
+              <p className="text-sm text-slate-400">Type any model name (or click a quick-fill chip) and hit Pull. Runs <code className="bg-slate-900 px-1 rounded text-slate-300">ollama pull {'{name}'}</code> via the backend. Chips: llama3.2, qwen2.5-coder:7b, mistral, phi4, gemma3:4b, nomic-embed-text.</p>
+            </div>
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+              <h4 className="font-bold text-white mb-2">Load in Chat Button</h4>
+              <p className="text-sm text-slate-400">Every local model row has a permanent <strong className="text-emerald-400">Load in Chat</strong> button (always visible, not hover-only). Clicking it calls <code className="bg-slate-900 px-1 rounded text-slate-300">onSelectModel('ollama/{name}')</code> and navigates to Chat.</p>
+            </div>
+          </div>
+
+          {/* Refresh cadence */}
+          <div className="mt-6 p-4 bg-slate-800 border border-slate-700 rounded-xl">
+            <h4 className="font-bold text-white mb-3">Cache & Refresh Cadence</h4>
+            <table className="w-full text-sm">
+              <thead><tr className="text-slate-500 text-xs uppercase"><th className="text-left pb-2">Source</th><th className="text-left pb-2">Cache Key</th><th className="text-left pb-2">TTL</th><th className="text-left pb-2">Backend</th></tr></thead>
+              <tbody className="divide-y divide-slate-700/50">
+                {[
+                  ['HF Models', 'hf_trending_models', '12 hours', 'GET /trending'],
+                  ['HF Spaces', 'hf_trending_spaces', '12 hours', 'GET /spaces'],
+                  ['GGUF Models', 'hf_trending_gguf', '12 hours', 'GET /trending/gguf'],
+                  ['Ollama Local', 'live', 'polling 10s', 'GET /ollama/tags'],
+                ].map(([source, key, ttl, endpoint]) => (
+                  <tr key={source}>
+                    <td className="py-2 text-slate-300 font-bold">{source}</td>
+                    <td className="py-2 font-mono text-xs text-slate-400">{key}</td>
+                    <td className="py-2 text-oldgold-400 font-bold">{ttl}</td>
+                    <td className="py-2 font-mono text-xs text-cyan-400">{endpoint}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-6 p-5 bg-blue-900/20 border border-blue-500/30 rounded-xl">
+            <h4 className="text-lg font-bold text-blue-400 mb-2 flex items-center gap-2"><Zap className="w-5 h-5" /> Quick Action</h4>
+            <p className="text-sm text-slate-300 mb-4">Browse trending models and load one into Chat right now.</p>
+            <div className="flex gap-3 flex-wrap">
+              <button onClick={() => navigateTo('hf')} className="bg-oldgold-500 hover:bg-oldgold-400 text-midnight-950 px-4 py-2 rounded-lg text-sm font-black flex items-center gap-2 transition-colors">
+                🤗 Open HF Hub <ArrowRight className="w-4 h-4" />
+              </button>
+              <button onClick={() => navigateTo('ollama')} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-black flex items-center gap-2 transition-colors">
+                🦙 Open Ollama <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
       )

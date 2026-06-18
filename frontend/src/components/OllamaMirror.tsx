@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import {
-  Download, Play, Search, RefreshCw, HardDrive, Eye, Code2,
-  Wrench, Layers, Tag, ChevronRight, Zap, CheckCircle2,
+  Download, Search, RefreshCw, HardDrive, Eye, Code2,
+  Wrench, Layers, Tag, ChevronRight, Zap, CheckCircle2, MessageSquare,
 } from 'lucide-react';
 
 interface OllamaModel {
@@ -75,9 +75,9 @@ const ModelRow: React.FC<{
       {/* Activate */}
       <button
         onClick={() => onActivate(model.name)}
-        className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-midnight-800 hover:bg-emerald-600 border border-midnight-700 hover:border-emerald-500 text-slate-300 hover:text-white rounded-lg text-xs font-bold transition-all opacity-0 group-hover:opacity-100"
+        className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/15 hover:bg-emerald-600 border border-emerald-500/30 hover:border-emerald-500 text-emerald-400 hover:text-white rounded-lg text-xs font-black transition-all"
       >
-        <Play className="w-3 h-3" /> Use
+        <MessageSquare className="w-3 h-3" /> Load in Chat
       </button>
     </div>
   );
