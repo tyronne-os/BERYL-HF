@@ -18,6 +18,10 @@ from sse_starlette.sse import EventSourceResponse
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
 
+# Default brain for BERYL HF — MiniMax-M3 (427B MoE reasoning model, 1M ctx)
+# served via HF Inference Providers. Powers chat, preview build, and O.V.E voice.
+DEFAULT_MODEL = "MiniMaxAI/MiniMax-M3"
+
 app = FastAPI()
 
 # Enable CORS for Electron frontend
@@ -274,20 +278,24 @@ async def voice_orchestrate(
         buffered = BytesIO()
         screenshot.save(buffered, format="JPEG", quality=70)
         
-        # 3. LLM Orchestration (Logic + Powershell)
-        logic_client = InferenceClient(model="Qwen/Qwen2.5-Coder-32B-Instruct", token=HF_TOKEN)
+        # 3. LLM Orchestration (Logic + Powershell) — directed by MiniMax-M3
+        logic_client = InferenceClient(model=DEFAULT_MODEL, token=HF_TOKEN, provider="auto")
         system_prompt = """You are O.V.E (Omniscient Voice Engine), an elite AI agent with FULL ADMIN access to a Windows 11 Lenovo device via PowerShell, and full access to the Beryl HF Canvas.
 You will receive user voice transcriptions. You must decide whether to:
 1. Execute a local system command (Respond ONLY with JSON format: {"type": "powershell", "command": "Get-Process"})
 2. Build a UI artifact (Respond ONLY with JSON format: {"type": "artifact", "title": "Dashboard", "code": "```html ... ```", "speech": "I have built the dashboard."})
 3. Answer conversationally (Respond ONLY with JSON format: {"type": "chat", "speech": "Your conversational response."})
-Always output strictly JSON."""
+Always output strictly JSON as your final answer."""
 
-        llm_response = logic_client.text_generation(
-            f"{system_prompt}\n\nUser Voice Input: {instruction}",
-            max_new_tokens=4000,
-            temperature=0.1
+        completion = logic_client.chat_completion(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"User Voice Input: {instruction}"},
+            ],
+            max_tokens=6000,
+            temperature=0.1,
         )
+        llm_response = completion.choices[0].message.content or ""
         
         # 4. Parse & Execute
         import re
@@ -375,19 +383,24 @@ async def chat(request: ChatRequest):
                 
         return EventSourceResponse(ollama_event_generator())
     
-    # Existing HF routing
-    client = InferenceClient(model=request.model, token=HF_TOKEN)
-    
+    # HF routing via Inference Providers (provider="auto" picks a live provider,
+    # e.g. Together/Novita/Fireworks for MiniMax-M3). Reasoning-model aware.
+    client = InferenceClient(model=request.model, token=HF_TOKEN, provider="auto")
+
     async def event_generator():
         collected = ""
         prompt_text = " ".join(m.content for m in request.messages)
         try:
             for response in client.chat_completion(
                 messages=[{"role": m.role, "content": m.content} for m in request.messages],
-                max_tokens=2048,
+                max_tokens=6000,
                 stream=True
             ):
-                content = response.choices[0].delta.content
+                delta = response.choices[0].delta
+                reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                if reasoning:
+                    yield {"data": json.dumps({"reasoning": reasoning})}
+                content = delta.content
                 if content:
                     collected += content
                     yield {"data": json.dumps({"content": content})}

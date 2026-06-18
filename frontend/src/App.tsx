@@ -35,7 +35,7 @@ import BottomNav from './components/BottomNav';
 import { Settings, Monitor, Zap, MessageSquare, TrendingUp, Globe, Cpu, DollarSign, Wand2, TerminalSquare, BookOpen, Minimize2, Server, FolderOpen, X, Sparkles } from 'lucide-react';
 
 const App: React.FC = () => {
-  const [selectedModel, setSelectedModel] = useState('MiniMaxAI/MiniMax-M2.5');
+  const [selectedModel, setSelectedModel] = useState('MiniMaxAI/MiniMax-M3');
   const [additionalModels, setAdditionalModels] = useState<{ id: string; author: string }[]>([]);
   const [currentArtifact, setCurrentArtifact] = useState<any>(null);
   const [isComputerUseEnabled, setIsComputerUseEnabled] = useState(false);

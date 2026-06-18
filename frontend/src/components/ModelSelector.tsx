@@ -12,8 +12,8 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ selected, onSelect, addit
   const [isOpen, setIsOpen] = useState(false);
   
   const primaryModels = [
-    { id: 'MiniMaxAI/MiniMax-M2.5', author: 'MiniMaxAI', role: 'Planning & Execution' },
-    { id: 'moonshotai/Kimi-K2.6', author: 'moonshotai', role: 'Deep Debugging' },
+    { id: 'MiniMaxAI/MiniMax-M3', author: 'MiniMaxAI', role: 'Default Brain' },
+    { id: 'MiniMaxAI/MiniMax-M2.7', author: 'MiniMaxAI', role: 'Fast / Cheaper' },
     { id: 'Qwen/Qwen2.5-Coder-32B-Instruct', author: 'Qwen', role: 'Rapid Template' },
   ];
 

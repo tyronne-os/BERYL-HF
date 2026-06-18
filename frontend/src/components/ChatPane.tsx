@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
-import { Send, User, Bot, Paperclip, Mic, AtSign, Plus } from 'lucide-react';
+import { Send, User, Bot, Paperclip, Mic, AtSign, Plus, Brain, ChevronDown } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+  reasoning?: string;
 }
 
 interface ChatPaneProps {
@@ -22,6 +23,26 @@ You have absolute awareness of the following local capabilities:
 4. Canvas Viewport: Immersive 66% live preview with responsive device toggles, history rollbacks, and a Monaco-style split-pane inspector.
 5. Telemetry & CLI: Background AST semantic indexing, VRAM scaling, and terminal emulation.
 When the user asks about what is possible or how to do things, reference these capabilities. Be concise, expert, and highly technical. You are directly connected to the Living Documentation.`;
+
+const ReasoningBlock: React.FC<{ text: string; thinking: boolean }> = ({ text, thinking }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-2 rounded-lg border border-slate-700/60 bg-slate-900/40 overflow-hidden">
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between px-2.5 py-1.5 text-[11px] font-bold text-oldgold-400/90 hover:bg-slate-900/60">
+        <span className="flex items-center space-x-1.5">
+          <Brain className={`w-3 h-3 ${thinking ? 'animate-pulse' : ''}`} />
+          <span>{thinking ? 'M3 is thinking…' : 'Reasoning'}</span>
+        </span>
+        <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="px-3 py-2 text-[11px] text-slate-400 whitespace-pre-wrap font-mono max-h-48 overflow-y-auto border-t border-slate-700/40">
+          {text}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const ChatPane: React.FC<ChatPaneProps> = ({ model, isComputerUseEnabled, onArtifactCreated }) => {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -75,27 +96,38 @@ const ChatPane: React.FC<ChatPaneProps> = ({ model, isComputerUseEnabled, onArti
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       let assistantContent = '';
-      
-      setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+      let assistantReasoning = '';
+
+      setMessages(prev => [...prev, { role: 'assistant', content: '', reasoning: '' }]);
 
       if (reader) {
+        let buffer = '';
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n');
-          
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // keep incomplete line for next chunk
+
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               try {
                 const data = JSON.parse(line.slice(6));
+                if (data.reasoning) {
+                  assistantReasoning += data.reasoning;
+                  setMessages(prev => {
+                    const m = [...prev];
+                    m[m.length - 1] = { ...m[m.length - 1], reasoning: assistantReasoning };
+                    return m;
+                  });
+                }
                 if (data.content) {
                   assistantContent += data.content;
                   setMessages(prev => {
-                    const newMsgs = [...prev];
-                    newMsgs[newMsgs.length - 1].content = assistantContent;
-                    return newMsgs;
+                    const m = [...prev];
+                    m[m.length - 1] = { ...m[m.length - 1], content: assistantContent };
+                    return m;
                   });
                 }
               } catch (e) {}
@@ -166,11 +198,18 @@ const ChatPane: React.FC<ChatPaneProps> = ({ model, isComputerUseEnabled, onArti
                 {msg.role === 'user' ? <User className="w-5 h-5" /> : <Bot className="w-5 h-5" />}
               </div>
               <div className={`p-3 rounded-2xl text-sm leading-relaxed ${msg.role === 'user' ? 'bg-blue-700 text-white' : 'bg-slate-800 text-slate-100 border border-slate-700'}`}>
-                <div className="prose prose-invert prose-sm max-w-none">
-                  <ReactMarkdown>
-                    {msg.content}
-                  </ReactMarkdown>
-                </div>
+                {msg.role === 'assistant' && msg.reasoning && (
+                  <ReasoningBlock text={msg.reasoning} thinking={!msg.content} />
+                )}
+                {msg.content ? (
+                  <div className="prose prose-invert prose-sm max-w-none">
+                    <ReactMarkdown>
+                      {msg.content}
+                    </ReactMarkdown>
+                  </div>
+                ) : msg.role === 'assistant' && !msg.reasoning ? (
+                  <span className="text-slate-500 text-xs">…</span>
+                ) : null}
               </div>
             </div>
           </div>
