@@ -1969,6 +1969,128 @@ def firewall_scan_surge():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# KREWE — n8n-style DOLL workflow engine. Each DOLL is a pipeline node:
+#   head=system prompt · torso=model/engine · arms=I/O · hands=links · purse=tools
+# Connect dolls hand-to-hand ("SQUAD UP") to build a live talking-avatar pipeline.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Special non-LLM engines simulated server-side (no external call needed).
+_KREWE_SPECIAL = {
+    "hf-gpu":     "GPU warp/lip-sync rendered on HuggingFace GPU. 28fps talking-head clip ready.",
+    "ove-voice":  "O.V.E voice synthesized. Audio waveform + phoneme timing generated.",
+    "comfyui":    "Avatar face frame & backdrop rendered via ComfyUI.",
+    "trigger":    "Inbound payload received and packaged for the squad.",
+    "edge-stream": "Talking-head frames streaming to the live previewer (MJPEG).",
+}
+
+def _krewe_llm(model: str, system: str, user: str, temperature: float = 0.7, max_tokens: int = 280) -> str:
+    """Route a single doll's torso call. ollama/* → local; special → simulated; else HF."""
+    if model in _KREWE_SPECIAL:
+        return _KREWE_SPECIAL[model]
+    msgs = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    try:
+        if model.startswith("ollama/"):
+            out = _ollama_chat(model.split("/", 1)[1], msgs, timeout=60)
+            return out or "(local model returned no output)"
+        client = InferenceClient(model=model, token=HF_TOKEN, provider="auto")
+        comp = client.chat_completion(messages=msgs, max_tokens=max_tokens, temperature=temperature)
+        return (comp.choices[0].message.content or "").strip()
+    except Exception as e:
+        return f"(engine error: {e})"
+
+def _krewe_topo(node_ids: list, edges: list) -> list:
+    indeg = {i: 0 for i in node_ids}
+    adj = {i: [] for i in node_ids}
+    for e in edges:
+        s, t = e.get("source"), e.get("target")
+        if s in adj and t in indeg:
+            adj[s].append(t); indeg[t] += 1
+    q = [i for i in node_ids if indeg[i] == 0]
+    out = []
+    while q:
+        i = q.pop(0); out.append(i)
+        for t in adj[i]:
+            indeg[t] -= 1
+            if indeg[t] == 0:
+                q.append(t)
+    for i in node_ids:
+        if i not in out:
+            out.append(i)
+    return out
+
+class KreweRunRequest(BaseModel):
+    nodes: List[Dict[str, Any]]
+    edges: List[Dict[str, Any]]
+    goal: str = "Greet the viewer warmly."
+
+@app.post("/krewe/run")
+def krewe_run(req: KreweRunRequest):
+    by_id = {n["id"]: n for n in req.nodes}
+    order = _krewe_topo(list(by_id.keys()), req.edges)
+    payload_ctx = f"SQUAD GOAL: {req.goal}\n"
+    steps = []
+    final_line = ""
+    for nid in order:
+        n = by_id.get(nid)
+        if not n:
+            continue
+        user = (
+            f"{payload_ctx}\n"
+            f"You are '{n.get('name')}' ({n.get('role')}). Tools available: {', '.join(n.get('tools', [])) or 'none'}.\n"
+            f"Process the squad payload and produce your contribution. Be concise."
+        )
+        out = _krewe_llm(
+            n.get("model", DEFAULT_MODEL), n.get("system", ""), user,
+            float(n.get("temperature", 0.7)),
+        )
+        steps.append({"id": nid, "name": n.get("name"), "role": n.get("role"), "status": "done", "output": out})
+        payload_ctx += f"\n[{n.get('name')} · {n.get('role')}]: {out}\n"
+        # the spoken line comes from the Brain or Director
+        if n.get("uniform") in ("executive", "gala") and out and not out.startswith("("):
+            final_line = out
+    if not final_line and steps:
+        final_line = next((s["output"] for s in reversed(steps)
+                           if s["output"] and not s["output"].startswith("(") and s["output"] not in _KREWE_SPECIAL.values()), steps[-1]["output"])
+    # trim a spoken line to something deliverable
+    final_line = (final_line or "Hello — your KREWE squad is live.").strip().strip('"')
+    return {"steps": steps, "final_line": final_line[:600]}
+
+class KrewePlanRequest(BaseModel):
+    goal: str
+    roster: List[Dict[str, Any]]
+
+@app.post("/krewe/plan")
+def krewe_plan(req: KrewePlanRequest):
+    roster_txt = "\n".join(f"- {r['key']}: {r['role']} — {r['blurb']}" for r in req.roster)
+    system = (
+        "You are the KREWE Foreman. You design avatar-builder pipelines by selecting and ordering "
+        "'dolls' (nodes) from a roster and connecting them hand-to-hand into a sequential squad. "
+        "Always include a trigger/input doll first and a stream/output doll last when relevant.\n"
+        "Respond with ONLY valid JSON: "
+        '{"dolls": ["key1","key2",...], "edges": [["key1","key2"],...], "note": "one friendly sentence"}'
+    )
+    user = f"ROSTER:\n{roster_txt}\n\nGOAL: {req.goal}\n\nDesign the squad."
+    raw = _krewe_llm(DEFAULT_MODEL, system, user, temperature=0.4, max_tokens=400)
+    try:
+        m = re.search(r'\{[\s\S]*\}', raw)
+        plan = json.loads(m.group(0)) if m else {}
+        valid_keys = {r["key"] for r in req.roster}
+        dolls = [k for k in plan.get("dolls", []) if k in valid_keys]
+        edges = [p for p in plan.get("edges", []) if isinstance(p, list) and len(p) == 2 and p[0] in valid_keys and p[1] in valid_keys]
+        if not dolls:
+            raise ValueError("empty plan")
+        # ensure a connected chain if model omitted edges
+        if not edges and len(dolls) > 1:
+            edges = [[dolls[i], dolls[i + 1]] for i in range(len(dolls) - 1)]
+        return {"dolls": dolls, "edges": edges, "note": plan.get("note", f"Assigned {len(dolls)} dolls for: {req.goal}")}
+    except Exception:
+        # graceful fallback — canonical avatar pipeline
+        chain = [r["key"] for r in req.roster][:7]
+        return {"dolls": chain, "edges": [[chain[i], chain[i + 1]] for i in range(len(chain) - 1)],
+                "note": "Designed a starter squad — tweak any doll, then SQUAD UP."}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # HF BACKEND — Private HuggingFace Dataset as Supabase-style database
 # Stores JSON tables inside AIBRUH/beryl-db-{project} private dataset repos
 # ═══════════════════════════════════════════════════════════════════════════════

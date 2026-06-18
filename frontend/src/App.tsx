@@ -28,6 +28,7 @@ import VoiceAgent from './components/VoiceAgent';
 import ComfyUIMirror from './components/ComfyUIMirror';
 import FlipMode from './components/FlipMode';
 import GenSherman from './components/GenSherman';
+import KrewePage from './components/krewe/KrewePage';
 import BottomNav from './components/BottomNav';
 import { Settings, Monitor, Zap, Cpu, Wand2, TerminalSquare, BookOpen, FolderOpen, X, Sparkles } from 'lucide-react';
 
@@ -39,7 +40,7 @@ const App: React.FC = () => {
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [isFileMenuOpen, setIsFileMenuOpen] = useState(false);
   const [isVoiceOpen, setIsVoiceOpen] = useState(true);
-  const [currentPage, setCurrentPage] = useState<'chat' | 'hf' | 'gpu' | 'studio' | 'cli' | 'docs' | 'ollama' | 'comfy' | 'fliip' | 'sherman'>('chat');
+  const [currentPage, setCurrentPage] = useState<'chat' | 'hf' | 'gpu' | 'studio' | 'cli' | 'docs' | 'ollama' | 'comfy' | 'fliip' | 'sherman' | 'krewe'>('chat');
 
   const handleAddModel = (modelId: string) => {
     const author = modelId.split('/')[0];
@@ -88,6 +89,8 @@ const App: React.FC = () => {
         return <LivingDoc navigateTo={setCurrentPage} />;
       case 'sherman':
         return <GenSherman />;
+      case 'krewe':
+        return <KrewePage />;
       default:
         return null;
     }

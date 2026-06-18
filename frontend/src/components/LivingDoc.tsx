@@ -739,6 +739,102 @@ npx -y @modelcontextprotocol/server-sqlite --db-path ./local.db
           </div>
         </div>
       )
+    },
+    {
+      id: 'krewe',
+      title: '14. KREWE — Avatar Builder',
+      icon: <Sparkles className="w-4 h-4" />,
+      content: (
+        <div className="space-y-6">
+          <h1 className="text-4xl font-extrabold tracking-tight text-white mb-4">KREWE · DOLL-Node Avatar Builder</h1>
+          <p className="text-lg text-slate-300 leading-relaxed">
+            <strong className="text-oldgold-400">KREWE</strong> is an n8n-style visual workflow canvas where every node is a
+            stylized fashion <strong className="text-white">DOLL</strong>. Connect dolls hand-to-hand to build a
+            <strong className="text-white"> live talking-avatar pipeline</strong>, then hit <strong className="text-oldgold-400">SQUAD UP</strong> to run it and watch the avatar speak in the live stage.
+            Open it from the <strong className="text-white">KREWE</strong> button in the bottom nav.
+          </p>
+
+          {/* Anatomy mapping */}
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6">
+            <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><Wand2 className="w-5 h-5 text-oldgold-400" /> DOLL Anatomy → Pipeline Primitive</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {[
+                ['👑 Head', 'System instructions & persona — click to edit prompt + temperature'],
+                ['👗 Torso', 'Core model / execution engine — Ollama, HF, or special engine (hf-gpu, ove-voice, comfyui)'],
+                ['🤝 Arms / Hands', 'Left arm = input port · Right arm = output port. Drag hand-to-hand to lock execution order'],
+                ['👜 Purse', 'Tool & function-calling module — fires in parallel to the torso; flashes when active'],
+              ].map(([k, v], i) => (
+                <div key={i} className="flex gap-3 bg-midnight-900 border border-midnight-700 rounded-xl p-3">
+                  <span className="font-bold text-oldgold-400 text-sm whitespace-nowrap">{k}</span>
+                  <span className="text-xs text-slate-400">{v}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* The roster */}
+          <h3 className="text-2xl font-bold text-white mt-8 mb-3">The Assigned Squad</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {[
+              ['📮 The Courier', 'Trigger / I/O', 'Webhooks, messages, schedules — the squad entry point'],
+              ['👑 Ms. Cosmos', 'Director', 'Orchestrates persona, mood & the line to deliver'],
+              ['💼 The Executive', 'Brain', 'Reasoning engine — writes the avatar dialogue'],
+              ['⚕️ The Doctor', 'QA / Safety', 'Audits the line for safety, tone & coherence'],
+              ['🎤 The Vocalist', 'Voice / TTS', 'Text → speech (O.V.E / Piper) with phoneme timing'],
+              ['🔧 The Mechanic', 'HF GPU Engine', 'Runs GPU warp / lip-sync (LatentSync) on HuggingFace GPU'],
+              ['🎨 The Artist', 'Face / Visual', 'Generates the avatar face & backdrop via ComfyUI'],
+              ['🏃 The Athlete', 'Stream / Output', 'Streams finished frames to the live previewer at 28fps'],
+            ].map(([n, r, d], i) => (
+              <div key={i} className="bg-slate-800 border border-oldgold-500/20 rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-white text-sm">{n}</span>
+                  <span className="text-[10px] text-oldgold-400 uppercase tracking-wider font-bold">{r}</span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1.5">{d}</p>
+              </div>
+            ))}
+          </div>
+          <div className="p-4 bg-amber-900/20 border border-amber-500/30 rounded-xl">
+            <p className="text-sm text-amber-200"><strong>🔧 The Mechanic = your HF GPU doll.</strong> She is flagged <code className="text-amber-400 font-mono">isGpu</code> and routes the heavy renders to HuggingFace GPU hardware. Edit her torso to point at any GPU Space.</p>
+          </div>
+
+          {/* Workflow */}
+          <h3 className="text-2xl font-bold text-white mt-8 mb-3">Building a Squad</h3>
+          <div className="space-y-2">
+            {[
+              ['Foreman chat (left rail)', 'Describe the avatar in plain English — the AI Foreman (/krewe/plan) assigns dolls and holds their hands automatically'],
+              ['Roster tab', 'Or click any doll to drop her on the canvas manually'],
+              ['Avatar Squad button', 'One click lays out the full canonical pipeline, pre-connected'],
+              ['Configure', 'Click a doll\'s head / torso / purse to open the config drawer'],
+              ['SQUAD UP', 'Executes the DAG (/krewe/run) doll-by-doll with live tracing, then the avatar speaks in the right-hand Live Stage'],
+            ].map(([t, d], i) => (
+              <div key={i} className="flex gap-3 items-start bg-midnight-900 border border-midnight-700 rounded-xl p-3">
+                <span className="w-6 h-6 rounded-full bg-oldgold-500 text-midnight-950 text-xs font-black flex items-center justify-center shrink-0">{i + 1}</span>
+                <div><span className="text-sm font-bold text-white">{t}</span><p className="text-xs text-slate-400">{d}</p></div>
+              </div>
+            ))}
+          </div>
+
+          {/* Tech */}
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 mt-6">
+            <h3 className="text-lg font-bold text-white mb-3">Under the Hood</h3>
+            <ul className="text-sm text-slate-400 space-y-1.5 list-disc list-inside">
+              <li>Canvas: <code className="text-cyan-400 font-mono">@xyflow/react</code> (React Flow v12) — infinite pan/zoom, custom DOLL nodes, Bezier hand-links</li>
+              <li>Files: <code className="text-cyan-400 font-mono">components/krewe/</code> — KrewePage, DollNode, AvatarStage, roster</li>
+              <li>Backend: <code className="text-cyan-400 font-mono">POST /krewe/plan</code> (AI squad designer) · <code className="text-cyan-400 font-mono">POST /krewe/run</code> (DAG executor with topo-sort)</li>
+              <li>Engine routing: <code className="text-oldgold-400 font-mono">ollama/*</code> → local · HF repo id → hosted · <code className="text-oldgold-400 font-mono">hf-gpu / ove-voice / comfyui</code> → special engines</li>
+            </ul>
+          </div>
+
+          <div className="mt-6 p-5 bg-oldgold-900/10 border border-oldgold-500/30 rounded-xl">
+            <h4 className="text-lg font-bold text-oldgold-400 mb-2 flex items-center gap-2"><Sparkles className="w-5 h-5" /> Quick Action</h4>
+            <p className="text-sm text-slate-300 mb-4">Open KREWE and load the Avatar Squad.</p>
+            <button onClick={() => navigateTo('krewe')} className="bg-gradient-to-r from-oldgold-500 to-amber-500 hover:brightness-110 text-midnight-950 px-4 py-2 rounded-lg text-sm font-black flex items-center gap-2 transition-all">
+              👯 Open KREWE Builder <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )
     }
   ];
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Image as ImageIcon, Flame, Shield } from 'lucide-react';
+import { Image as ImageIcon, Flame, Shield, Users } from 'lucide-react';
 
 interface BottomNavProps {
   currentPage: string;
@@ -10,6 +10,26 @@ const BottomNav: React.FC<BottomNavProps> = ({ currentPage, setCurrentPage }) =>
   return (
     <footer className="shrink-0 flex items-center justify-center py-2.5 bg-midnight-900 border-t border-midnight-800 z-40">
       <nav className="flex items-center bg-midnight-950/90 backdrop-blur-xl rounded-full p-1.5 border border-oldgold-500/30 shadow-[0_0_30px_rgba(212,175,55,0.15)]">
+        <button
+          onClick={() => setCurrentPage('krewe')}
+          className={`nav-flash px-6 py-2.5 rounded-full text-[11px] font-bold transition-all flex items-center space-x-2 ${
+            currentPage === 'krewe'
+              ? 'bg-gradient-to-r from-oldgold-500 to-amber-500 text-midnight-950 shadow-[0_0_20px_rgba(212,175,55,0.5)]'
+              : 'text-slate-400 hover:text-oldgold-400 hover:bg-midnight-800'
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          <span>KREWE</span>
+          {currentPage !== 'krewe' && (
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-oldgold-400 opacity-75" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-oldgold-500" />
+            </span>
+          )}
+        </button>
+
+        <div className="w-px h-6 bg-midnight-800 mx-2" />
+
         <button
           onClick={() => setCurrentPage('comfy')}
           className={`nav-flash px-6 py-2.5 rounded-full text-[11px] font-bold transition-all flex items-center space-x-2 ${currentPage === 'comfy' ? 'bg-emerald-600 text-white shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'text-slate-400 hover:text-emerald-400 hover:bg-midnight-800'}`}
