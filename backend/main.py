@@ -237,6 +237,24 @@ async def get_ollama_tags():
 class OllamaPullRequest(BaseModel):
     name: str
 
+@app.get("/ollama/show")
+async def ollama_show(name: str):
+    """Real model internals (quantization, params, family) for the Compact inspector."""
+    try:
+        r = requests.post("http://localhost:11434/api/show", json={"name": name}, timeout=25)
+        d = r.json()
+        det = d.get("details", {})
+        return {
+            "name": name,
+            "family": det.get("family"),
+            "families": det.get("families"),
+            "parameter_size": det.get("parameter_size"),
+            "quantization_level": det.get("quantization_level"),
+            "format": det.get("format"),
+        }
+    except Exception as e:
+        return {"name": name, "error": str(e)}
+
 @app.post("/ollama/pull")
 async def pull_ollama_model(request: OllamaPullRequest):
     try:
