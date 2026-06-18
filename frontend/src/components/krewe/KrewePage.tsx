@@ -21,6 +21,9 @@ import type { PortfolioEntry } from './VanityGallery';
 import AssemblyLine from './AssemblyLine';
 import GalleryView from './GalleryView';
 import type { AssemblyEntry, AssemblyStats } from './types';
+import PaperBanner from './PaperBanner';
+import PaperOverlay from './PaperOverlay';
+import type { ArxivPaper } from './PaperBanner';
 import { KREWE_ROSTER, rosterToData, AVATAR_PIPELINE } from './roster';
 import type { RosterEntry } from './roster';
 import { API } from '../../api';
@@ -99,7 +102,7 @@ function KreweCanvas() {
 
   // avatar stage
   const [avatar, setAvatar] = useState({
-    faceUniform: 'gala' as DollData['uniform'],
+    faceUniform: 'executive' as DollData['uniform'],
     speaking: false,
     line: '',
     status: 'idle' as 'idle' | 'building' | 'live',
@@ -114,6 +117,7 @@ function KreweCanvas() {
   const [reportEntry, setReportEntry] = useState<PortfolioEntry | null>(null);
   const [lastGoal, setLastGoal] = useState('');
   const [lastHealth, setLastHealth] = useState({ total: 0, done: 0, failed: 0 });
+  const [activePaper, setActivePaper] = useState<ArxivPaper | null>(null);
 
   // ── callbacks passed into DollData (stable refs) ──────────────────────────
   const openConfig = useCallback((id: string, section: 'head' | 'torso' | 'purse') => {
@@ -267,7 +271,7 @@ function KreweCanvas() {
 
     let payloadCtx = `SQUAD GOAL: ${goal}\n`;
     let finalLine = '';
-    let faceUniform: DollData['uniform'] = 'gala';
+    let faceUniform: DollData['uniform'] = 'executive';
     const errors: typeof lastErrors = [];
 
     for (const nid of order) {
@@ -330,10 +334,10 @@ function KreweCanvas() {
           e.target === nid ? { ...e, type: 'flow', data: { status: 'done' as EdgeStatus } } : e
         ));
         payloadCtx += `\n[${node.data.name} · ${node.data.role}]: ${result.output}\n`;
-        if (node.data.uniform === 'gala' || node.data.uniform === 'executive') {
-          if (result.output && !result.output.startsWith('(')) finalLine = result.output;
+        if (['gala', 'executive', 'doctor', 'conductor'].includes(node.data.uniform as string)) {
+          if (result.output && !result.output.startsWith('(') && result.output.length > 10) finalLine = result.output;
         }
-        if (node.data.uniform === 'gala' || node.data.uniform === 'artist') {
+        if (['gala', 'executive', 'artist', 'stylist'].includes(node.data.uniform as string)) {
           faceUniform = node.data.uniform;
         }
       } else {
@@ -537,7 +541,7 @@ function KreweCanvas() {
       type: 'flow', data: { status: 'idle' as EdgeStatus },
     })));
     placeCount.current = placed.length;
-    setAvatar((a) => ({ ...a, faceUniform: 'gala', status: 'idle', line: '', speaking: false }));
+    setAvatar((a) => ({ ...a, faceUniform: 'executive', status: 'idle', line: '', speaking: false }));
   }, [openConfig, swapModel, setNodes, setEdges]);
 
   const applyPlan = useCallback((dollKeys: string[], pairs: ([string, string] | { from: string; to: string })[]) => {
@@ -579,6 +583,24 @@ function KreweCanvas() {
     setLastErrors([]);
   }, [setNodes, setEdges]);
 
+  const handlePaperSquadIt = useCallback((
+    dolls: string[],
+    edges: [string, string][],
+    goal: string,
+    note: string,
+  ) => {
+    applyPlan(dolls, edges);
+    setLastGoal(goal);
+    setLeftTab('build');
+    setChat((c) => [
+      ...c,
+      {
+        role: 'assistant' as const,
+        text: `📄 **SQUAD IT applied!**\n\n${goal}\n\n${note}\n\nHit **SQUAD UP** to test the science.`,
+      },
+    ]);
+  }, [applyPlan]);
+
   // ── Vanity speak callback (from chat) ────────────────────────────────────
   const onSpeakLine = useCallback((line: string) => {
     setAvatar((a) => ({ ...a, speaking: true, line, status: 'live' }));
@@ -601,7 +623,23 @@ function KreweCanvas() {
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div className="flex flex-1 overflow-hidden bg-midnight-950">
+    <div className="flex flex-col flex-1 overflow-hidden bg-midnight-950">
+      {/* ── RESEARCH PAPER BANNER ─────────────────────────────────────────── */}
+      <PaperBanner onSelect={setActivePaper} />
+
+      {/* ── PAPER OVERLAY ─────────────────────────────────────────────────── */}
+      {activePaper && (
+        <PaperOverlay
+          paper={activePaper}
+          onClose={() => setActivePaper(null)}
+          onSquadIt={(dolls, edges, goal, note) => {
+            handlePaperSquadIt(dolls, edges as [string, string][], goal, note);
+            setActivePaper(null);
+          }}
+        />
+      )}
+
+      <div className="flex flex-1 overflow-hidden">
       {/* ── LEFT RAIL ──────────────────────────────────────────────────────── */}
       <div className="w-[300px] shrink-0 border-r border-midnight-800 flex flex-col bg-midnight-900">
         <div className="flex border-b border-midnight-800">
@@ -867,6 +905,7 @@ function KreweCanvas() {
           <ReportOverlay entry={reportEntry} onClose={() => setReportEntry(null)} />
         )}
       </div>
+      </div>{/* end inner flex row */}
     </div>
   );
 }

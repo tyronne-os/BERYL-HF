@@ -23,7 +23,8 @@ import { AlertCircle, Clock, ChevronDown, Check, Zap } from 'lucide-react';
 export type UniformKey =
   | 'gala' | 'mechanic' | 'executive' | 'vocalist'
   | 'doctor' | 'artist' | 'courier' | 'athlete'
-  | 'librarian' | 'scout' | 'archivist' | 'conductor';
+  | 'librarian' | 'scout' | 'archivist' | 'conductor'
+  | 'stylist';
 
 export interface DollData {
   name: string;
@@ -64,6 +65,7 @@ export const UNIFORMS: Record<UniformKey, {
   scout:     { dress: '#2d5a27', accent: '#86efac', skin: '#c68642', hair: '#2a1a08', label: 'Scout',      icon: '🤖', crown: 'cap'     },
   archivist: { dress: '#4a1d6e', accent: '#c084fc', skin: '#8d5524', hair: '#2a1808', label: 'Archive',    icon: '🧠', crown: 'none'    },
   conductor: { dress: '#2d1b00', accent: '#fbbf24', skin: '#6b4226', hair: '#0a0604', label: 'Baton',      icon: '🎯', crown: 'beret'   },
+  stylist:   { dress: '#6b1a3a', accent: '#e8a4b8', skin: '#9a6b4b', hair: '#3d1a0e', label: 'Studio',     icon: '✂️', crown: 'none'    },
 };
 
 // ── Role-appropriate model registry ─────────────────────────────────────────
@@ -132,6 +134,14 @@ const ROLE_MODELS: Record<string, ModelEntry[]> = {
   'Flow Router':  [
     { id: 'logic',                            label: 'Logic Router',         type: 'engine' },
     { id: 'MiniMaxAI/MiniMax-M3',            label: 'AI Router (M3)',        type: 'hf'     },
+  ],
+  'Text-to-Image': [
+    { id: 'black-forest-labs/FLUX.1-dev',                 label: 'FLUX.1 Dev (max realism)',    type: 'hf'     },
+    { id: 'black-forest-labs/FLUX.1-schnell',             label: 'FLUX.1 Schnell (fast)',        type: 'hf'     },
+    { id: 'stabilityai/stable-diffusion-3.5-large',       label: 'SD 3.5 Large',                type: 'hf'     },
+    { id: 'SG161222/Realistic_Vision_V6.0_B1_noVAE',     label: 'Realistic Vision V6',          type: 'hf'     },
+    { id: 'Lykon/dreamshaper-8',                          label: 'Dreamshaper 8',                type: 'hf'     },
+    { id: 'comfyui',                                      label: 'ComfyUI (local)',              type: 'engine' },
   ],
 };
 

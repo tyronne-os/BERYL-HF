@@ -2146,6 +2146,7 @@ _KREWE_ROLE_MODELS: Dict[str, List[str]] = {
     "Voice / TTS":    ["ove-voice", "facebook/mms-tts-eng", "suno/bark-small", "hexgrad/Kokoro-82M"],
     "GPU Engine":     ["hf-gpu", "AIBRUH/latentsync", "KwaiVGI/CHAMP"],
     "Face / Visual":  ["comfyui", "stabilityai/stable-diffusion-xl-base-1.0", "black-forest-labs/FLUX.1-schnell"],
+    "Text-to-Image":  ["black-forest-labs/FLUX.1-dev", "black-forest-labs/FLUX.1-schnell", "stabilityai/stable-diffusion-3.5-large", "SG161222/Realistic_Vision_V6.0_B1_noVAE", "Lykon/dreamshaper-8", "comfyui"],
     "Trigger / I/O":  ["trigger", "webhook", "cron"],
     "Stream / Output":["edge-stream", "webrtc", "mjpeg"],
     "Chain Executor": ["langchain-hf", "langchain-openai", "MiniMaxAI/MiniMax-M3"],
@@ -2158,6 +2159,159 @@ _KREWE_ROLE_MODELS: Dict[str, List[str]] = {
 def krewe_models(role: str = "Brain"):
     models = _KREWE_ROLE_MODELS.get(role, _KREWE_ROLE_MODELS["Brain"])
     return {"role": role, "models": models}
+
+
+@app.get("/krewe/master-squad")
+def krewe_master_squad():
+    """Return the canonical Inner Circle squad spec — used by the frontend
+    to pre-populate the canvas on first load and by the assembly line as
+    the default template for automated persona production."""
+    return {
+        "name": "The Inner Circle",
+        "version": "1.0",
+        "description": "Research-backed 7-doll pipeline for undetectable photorealistic talking humans.",
+        "cost_per_run_usd": 0.003,
+        "cold_latency_s": 13,
+        "papers": [
+            "LatentSync — ByteDance CVPR 2025 (arxiv 2412.09262)",
+            "FLUX.1 — Black Forest Labs ICML 2024",
+            "StyleTTS2 — NeurIPS 2023 (Kokoro-82M)",
+            "InstantID — CVPR 2024 (arxiv 2401.07519)",
+        ],
+        "dolls": [
+            {"slot": 1, "key": "courier",   "name": "The Courier",  "role": "Trigger / I/O",   "model": "trigger",                             "cost": "$0",      "latency_ms": 0},
+            {"slot": 2, "key": "cosmos",    "name": "Ms. Cosmos",   "role": "Director",         "model": "MiniMaxAI/MiniMax-M3",                "cost": "$0",      "latency_ms": 600},
+            {"slot": 3, "key": "stylist",   "name": "The Stylist",  "role": "Text-to-Image",    "model": "black-forest-labs/FLUX.1-schnell",     "cost": "$0.003",  "latency_ms": 3500},
+            {"slot": 4, "key": "vocalist",  "name": "The Vocalist", "role": "Voice / TTS",      "model": "hexgrad/Kokoro-82M",                   "cost": "$0",      "latency_ms": 400},
+            {"slot": 5, "key": "mechanic",  "name": "The Mechanic", "role": "GPU Engine",       "model": "AIBRUH/latentsync",                    "cost": "$0.0002", "latency_ms": 8000},
+            {"slot": 6, "key": "doctor",    "name": "The Doctor",   "role": "QA / Safety",      "model": "MiniMaxAI/MiniMax-M3",                "cost": "$0",      "latency_ms": 400},
+            {"slot": 7, "key": "athlete",   "name": "The Athlete",  "role": "Stream / Output",  "model": "edge-stream",                         "cost": "$0",      "latency_ms": 0},
+        ],
+        "upgrade_paths": {
+            "stylist":   {"trigger": "identity drift across runs",    "upgrade": "FLUX.1-dev + InstantID"},
+            "mechanic":  {"trigger": "mouth shape errors > 5%",       "upgrade": "Hallo2 or MuseTalk v2"},
+            "vocalist":  {"trigger": "need voice cloning from sample", "upgrade": "F5-TTS or XTTS-v2"},
+            "cosmos":    {"trigger": "need sub-200ms direction",       "upgrade": "Qwen2.5-7B local ollama"},
+        },
+    }
+
+
+# ── THE STYLIST — Text-to-Image photorealism engine ───────────────────────────
+
+_STYLIST_SYSTEM = """You are THE STYLIST — a precision text-to-image prompt engineer for photorealistic human avatars.
+
+INPUT: A persona description (name, appearance, role, mood, setting).
+OUTPUT: A single optimized image generation prompt followed by a negative_prompt line. Nothing else.
+
+REALISM RULES:
+- Natural skin: visible pores, subsurface scattering, micro-texture — never airbrushed or smoothed
+- Lighting: cinematic 3-point (soft key, fill, subtle rim), warm studio or golden-hour tone
+- Camera: shot on Sony A7 IV, 85mm f/1.8, natural shallow bokeh
+- Composition: upper-body or headshot, 3/4 angle
+- Expression: genuine, relaxed — not posed or stock-photo stiff
+- Details: individual hair strands, natural eye moisture/catchlights, clothing fabric weave
+
+FORMAT:
+Line 1: [comma-separated positive descriptors — rich, specific, cinematic]
+Line 2: negative_prompt: (airbrushed:1.4), (smooth skin:1.3), (plastic texture:1.5), (glossy:1.3), (cartoon:1.5), (illustration:1.4), (CGI render:1.3), (stock photo smile:1.2), (symmetrical face:1.1), (overexposed:1.2)"""
+
+_REALISM_NEGATIVE = (
+    "(airbrushed:1.4), (smooth skin:1.3), (plastic texture:1.5), (glossy:1.3), "
+    "(cartoon:1.5), (illustration:1.4), (CGI render:1.3), (stock photo smile:1.2), "
+    "(symmetrical face:1.1), (overexposed:1.2), (soft focus:1.2), (Instagram filter:1.3)"
+)
+
+
+def _stylist_build_prompt(persona_description: str, style_override: str = "") -> dict:
+    """Use LLM to craft a photorealism-optimised FLUX prompt from a persona brief."""
+    user_msg = f"Persona: {persona_description}"
+    if style_override:
+        user_msg += f"\nStyle notes: {style_override}"
+
+    raw = _krewe_llm(DEFAULT_MODEL, _STYLIST_SYSTEM, user_msg, temperature=0.5, max_tokens=350)
+
+    # Parse positive + negative
+    lines = [l.strip() for l in raw.strip().splitlines() if l.strip()]
+    positive = lines[0] if lines else persona_description
+    negative = _REALISM_NEGATIVE
+    for line in lines[1:]:
+        if line.lower().startswith("negative_prompt:"):
+            negative = line.split(":", 1)[1].strip()
+            break
+
+    return {"positive": positive, "negative": negative}
+
+
+def _flux_generate_image(model_id: str, positive: str, negative: str) -> dict:
+    """
+    Call HuggingFace Inference API for the given diffusion model.
+    Returns {"image_b64": "...", "url": "..."} or {"error": "..."}.
+    """
+    hf_token = os.getenv("HF_TOKEN", "")
+    if not hf_token:
+        return {"error": "HF_TOKEN not set — cannot call inference API"}
+
+    api_url = f"https://api-inference.huggingface.co/models/{model_id}"
+    payload: dict = {
+        "inputs": positive,
+        "parameters": {
+            "negative_prompt": negative,
+            "num_inference_steps": 28,
+            "guidance_scale": 3.5,
+            "width": 768,
+            "height": 1024,
+        },
+    }
+    # FLUX models use guidance_scale differently; schnell ignores negative prompt
+    if "schnell" in model_id.lower():
+        payload["parameters"]["num_inference_steps"] = 4
+        payload["parameters"]["guidance_scale"] = 0.0
+
+    try:
+        req = urllib.request.Request(
+            api_url,
+            data=json.dumps(payload).encode(),
+            headers={
+                "Authorization": f"Bearer {hf_token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            image_bytes = resp.read()
+        import base64
+        b64 = base64.b64encode(image_bytes).decode()
+        return {"image_b64": b64, "mime": "image/jpeg"}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@app.post("/krewe/generate-image")
+def krewe_generate_image(payload: dict):
+    """
+    THE STYLIST endpoint.
+    Body: { persona: str, style?: str, model?: str }
+    Returns: { positive_prompt, negative_prompt, image_b64?, error? }
+    """
+    persona = payload.get("persona", "").strip()
+    style = payload.get("style", "")
+    model_id = payload.get("model", "black-forest-labs/FLUX.1-dev")
+
+    if not persona:
+        raise HTTPException(status_code=400, detail="persona field is required")
+
+    # Step 1: craft realism prompt via LLM
+    prompts = _stylist_build_prompt(persona, style)
+
+    # Step 2: call diffusion model
+    result = _flux_generate_image(model_id, prompts["positive"], prompts["negative"])
+
+    return {
+        "positive_prompt": prompts["positive"],
+        "negative_prompt": prompts["negative"],
+        "model": model_id,
+        **result,
+    }
 
 
 # ── AI-driven pipeline adjustments (swap model, fix errors, insert doll) ─────
@@ -2447,6 +2601,51 @@ def _squad_templates():
              "system": "You are the chief learning officer. Review for clarity, accuracy, engagement, and age-appropriate language. Improve where needed. Output ONLY the final teaching script."},
             {"name": "Educator", "role": "avatar",
              "system": "You are the educator avatar. Deliver the lesson opening in first person with intellectual warmth and genuine enthusiasm for the subject. Output your spoken delivery only."},
+        ],
+        # MASTER SQUAD — The Inner Circle (research-backed, ~$0.003/run)
+        # Sources: LatentSync CVPR2025, FLUX flow-matching ICML2024, StyleTTS2 NeurIPS2023
+        "master": [
+            {
+                "name": "Ms. Cosmos",
+                "role": "orchestrator",
+                "system": (
+                    "You are Ms. Cosmos — creative director of a live photorealistic avatar production.\n"
+                    "Read the squad goal and produce scene direction. spoken_script MUST be ≤15 words.\n"
+                    "No AI tells. No 'Certainly', 'Of course', 'As an AI'. First-person. Real human voice.\n"
+                    "OUTPUT JSON only: {\"persona\": \"...\", \"scene\": \"...\", "
+                    "\"spoken_script\": \"≤15 words\", \"emotion\": \"...\", \"voice_tone\": \"...\"}"
+                ),
+            },
+            {
+                "name": "The Stylist",
+                "role": "scriptwriter",
+                "system": (
+                    "You are The Stylist — precision text-to-image prompt engineer.\n"
+                    "Read the scene direction and persona. Write an optimized FLUX.1-schnell prompt.\n"
+                    "REALISM RULES: natural pores, subsurface scattering, 85mm f/1.8, 3-point cinematic lighting.\n"
+                    "NEGATIVE: (airbrushed:1.4),(plastic:1.5),(glossy:1.3),(cartoon:1.5),(smooth skin:1.3).\n"
+                    "Output format — Line 1: positive prompt. Line 2: negative_prompt: [negatives]"
+                ),
+            },
+            {
+                "name": "The Doctor",
+                "role": "qa",
+                "system": (
+                    "You are The Doctor — naturalness gate.\n"
+                    "Audit the spoken_script: ≤15 words, first-person, no AI tells, natural cadence, safe.\n"
+                    "If it passes: output verbatim. If not: output corrected version.\n"
+                    "Output the final spoken_script ONLY. No labels, no JSON."
+                ),
+            },
+            {
+                "name": "Avatar Talent",
+                "role": "avatar",
+                "system": (
+                    "You are the avatar. Deliver the approved script in first person as if speaking live to camera.\n"
+                    "Breathe life into it — genuine emotion, natural rhythm, real human presence.\n"
+                    "Output the final spoken performance ONLY. Nothing else."
+                ),
+            },
         ],
     }
 
@@ -2986,6 +3185,144 @@ def krewe_portfolio_delete(entry_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────
+# RESEARCH INTELLIGENCE — ArXiv paper scroller
+# ─────────────────────────────────────────────
+
+import urllib.request
+import xml.etree.ElementTree as ET
+
+_PAPER_CACHE: dict = {"papers": [], "fetched_at": 0.0}
+_PAPER_CACHE_TTL = 6 * 3600  # 6 hours
+
+_AVATAR_SEARCH_QUERIES = [
+    "ti:talking+head",
+    "ti:avatar+synthesis",
+    "ti:portrait+video",
+    "ti:lip+sync",
+    "ti:digital+human+generation",
+    "ti:face+animation+diffusion",
+]
+
+
+def _fetch_arxiv_batch(query: str, max_results: int = 15) -> list:
+    date_filter = "AND+submittedDate:[20251101+TO+20261231]"
+    url = (
+        f"http://export.arxiv.org/api/query"
+        f"?search_query={query}+{date_filter}"
+        f"&sortBy=submittedDate&sortOrder=descending&max_results={max_results}"
+    )
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "BERYL/1.0 (research scraper)"})
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            xml_data = resp.read()
+    except Exception:
+        return []
+
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
+    try:
+        root = ET.fromstring(xml_data)
+    except ET.ParseError:
+        return []
+
+    papers = []
+    for entry in root.findall("atom:entry", ns):
+        try:
+            arxiv_id_raw = entry.find("atom:id", ns).text or ""
+            arxiv_id = arxiv_id_raw.split("/abs/")[-1].split("v")[0].strip()
+            title = " ".join((entry.find("atom:title", ns).text or "").strip().split())
+            summary = " ".join((entry.find("atom:summary", ns).text or "").strip().split())[:700]
+            published = (entry.find("atom:published", ns).text or "")[:10]
+            authors = [
+                (a.find("atom:name", ns).text or "").strip()
+                for a in entry.findall("atom:author", ns)
+            ][:4]
+            cats = entry.findall("{http://arxiv.org/schemas/atom}category", ns)
+            categories = [c.get("term", "") for c in cats[:3]]
+
+            if arxiv_id and title:
+                papers.append({
+                    "arxiv_id": arxiv_id,
+                    "title": title,
+                    "summary": summary,
+                    "published": published,
+                    "authors": authors,
+                    "categories": categories,
+                    "hf_url": f"https://huggingface.co/papers/{arxiv_id}",
+                    "arxiv_url": f"https://arxiv.org/abs/{arxiv_id}",
+                    "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}",
+                })
+        except Exception:
+            continue
+    return papers
+
+
+@app.get("/krewe/papers")
+def krewe_papers(limit: int = 60):
+    now = time.time()
+    if _PAPER_CACHE["papers"] and (now - _PAPER_CACHE["fetched_at"]) < _PAPER_CACHE_TTL:
+        return {"papers": _PAPER_CACHE["papers"][:limit], "cached": True}
+
+    all_papers: list = []
+    seen_ids: set = set()
+
+    for q in _AVATAR_SEARCH_QUERIES:
+        batch = _fetch_arxiv_batch(q, max_results=12)
+        for p in batch:
+            if p["arxiv_id"] not in seen_ids:
+                seen_ids.add(p["arxiv_id"])
+                all_papers.append(p)
+
+    # Sort newest first
+    all_papers.sort(key=lambda p: p.get("published", ""), reverse=True)
+
+    _PAPER_CACHE["papers"] = all_papers
+    _PAPER_CACHE["fetched_at"] = now
+
+    return {"papers": all_papers[:limit], "cached": False}
+
+
+@app.post("/krewe/papers/squad-it")
+def krewe_paper_squad_it(payload: dict):
+    title = payload.get("title", "")
+    summary = payload.get("summary", "")
+
+    system = (
+        "You are a KREWE pipeline architect. Given an AI research paper about avatar/talking-head generation, "
+        "design a KREWE doll squad that implements or tests the paper's core methodology in a live avatar pipeline.\n\n"
+        "Available doll role keys (use EXACTLY these strings):\n"
+        "  courier, cosmos, executive, doctor, vocalist, mechanic, athlete, streamer,\n"
+        "  librarian, scout, archivist, conductor\n\n"
+        "Return ONLY valid JSON (no markdown fences):\n"
+        '{"dolls":["role_key1","role_key2"],"edges":[["from","to"],...],'
+        '"goal":"one sentence squad goal","note":"how this squad tests the paper methods"}\n\n'
+        "Choose 4–6 dolls that map to the paper pipeline stages. "
+        "edges must only reference dolls that appear in the dolls list."
+    )
+    user = f"Paper title: {title}\n\nAbstract: {summary[:900]}\n\nDesign the KREWE squad."
+
+    raw = _krewe_llm(DEFAULT_MODEL, system, user, temperature=0.35, max_tokens=350)
+
+    try:
+        m = re.search(r"\{[\s\S]*\}", raw)
+        data = json.loads(m.group(0)) if m else {}
+        dolls = data.get("dolls", [])
+        edges = data.get("edges", [])
+        goal = data.get("goal", f"Implement {title[:80]}")
+        note = data.get("note", "Squad generated from research paper — hit SQUAD UP to test the science.")
+        # Validate edge references
+        doll_set = set(dolls)
+        edges = [[a, b] for a, b in edges if a in doll_set and b in doll_set]
+        return {"dolls": dolls, "edges": edges, "goal": goal, "note": note}
+    except Exception:
+        return {
+            "dolls": ["courier", "cosmos", "mechanic", "athlete", "streamer"],
+            "edges": [["courier", "cosmos"], ["cosmos", "mechanic"], ["mechanic", "athlete"], ["athlete", "streamer"]],
+            "goal": f"Implement the {title[:80]} approach in a live avatar pipeline",
+            "note": "Standard fallback squad. Review the paper for specific model recommendations.",
+        }
 
 
 if __name__ == "__main__":
