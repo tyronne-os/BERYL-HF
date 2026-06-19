@@ -1753,38 +1753,205 @@ async def set_hf_billing(request: Request):
 
 
 # ═══════════════════════════════════════════════════════
-#  COMFYUI BRIDGE  (real proxy to a running ComfyUI on :8188)
+#  COMFYUI BRIDGE  + PROJECT DATABASE
 # ═══════════════════════════════════════════════════════
-COMFY_URL = "http://127.0.0.1:8188"
+import subprocess, glob as _glob
+
+_COMFY_PORTS = [8188, 8189, 7860]
+_COMFY_SEARCH_PATHS = [
+    os.path.expanduser("~/ComfyUI/main.py"),
+    os.path.expanduser("~/Desktop/ComfyUI/main.py"),
+    "C:/ComfyUI/main.py",
+    "D:/ComfyUI/main.py",
+]
+if os.environ.get("COMFYUI_PATH"):
+    _COMFY_SEARCH_PATHS.insert(0, os.environ["COMFYUI_PATH"])
+
+_COMFY_PROJECTS_PATH = os.path.join(os.path.dirname(__file__), "comfy_projects.json")
+
+def _comfy_discover():
+    """Return (url, stats) for the first responding ComfyUI port, or (None, None)."""
+    for port in _COMFY_PORTS:
+        url = f"http://127.0.0.1:{port}"
+        try:
+            r = requests.get(f"{url}/system_stats", timeout=2)
+            if r.status_code == 200:
+                return url, r.json()
+        except Exception:
+            pass
+    return None, None
+
+def _comfy_find_install():
+    """Return path to ComfyUI main.py if found locally."""
+    for p in _COMFY_SEARCH_PATHS:
+        if os.path.isfile(p):
+            return p
+    # broader search in common drives
+    for drive in ["C:/", "D:/", "E:/"]:
+        matches = _glob.glob(f"{drive}**/ComfyUI/main.py", recursive=False)
+        if matches:
+            return matches[0]
+    return None
+
+def _load_comfy_projects():
+    try:
+        with open(_COMFY_PROJECTS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"projects": []}
+
+def _save_comfy_projects(data: dict):
+    with open(_COMFY_PROJECTS_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
 @app.get("/comfy/status")
 async def comfy_status():
+    url, stats = _comfy_discover()
+    install_path = _comfy_find_install()
+    if url:
+        return {"online": True, "url": url, "stats": stats, "install_path": install_path}
+    return {"online": False, "url": "http://127.0.0.1:8188", "stats": None, "install_path": install_path}
+
+@app.post("/comfy/launch")
+async def comfy_launch(body: dict = Body({})):
+    """Try to start ComfyUI from the detected or provided path."""
+    path = body.get("path") or _comfy_find_install()
+    if not path:
+        raise HTTPException(status_code=404, detail="ComfyUI not found. Install from https://github.com/comfyanonymous/ComfyUI and set COMFYUI_PATH env var.")
     try:
-        r = requests.get(f"{COMFY_URL}/system_stats", timeout=2)
-        if r.status_code == 200:
-            return {"online": True, "url": COMFY_URL, "stats": r.json()}
-    except Exception:
-        pass
-    return {"online": False, "url": COMFY_URL}
+        python = os.path.join(os.path.dirname(path), "venv", "Scripts", "python.exe")
+        if not os.path.isfile(python):
+            python = "python"
+        subprocess.Popen(
+            [python, path, "--listen", "127.0.0.1", "--port", "8188"],
+            cwd=os.path.dirname(path),
+            creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
+        )
+        return {"launched": True, "path": path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/comfy/queue")
 async def comfy_queue():
+    url, _ = _comfy_discover()
+    if not url:
+        return {"queue_running": [], "queue_pending": []}
     try:
-        r = requests.get(f"{COMFY_URL}/queue", timeout=2)
+        r = requests.get(f"{url}/queue", timeout=2)
         return r.json()
     except Exception as e:
         return {"error": str(e), "queue_running": [], "queue_pending": []}
 
 @app.get("/comfy/models")
 async def comfy_models():
-    """Real checkpoint list from a running ComfyUI."""
+    url, _ = _comfy_discover()
+    if not url:
+        return {"checkpoints": []}
     try:
-        r = requests.get(f"{COMFY_URL}/object_info/CheckpointLoaderSimple", timeout=4)
+        r = requests.get(f"{url}/object_info/CheckpointLoaderSimple", timeout=4)
         data = r.json()
         ckpts = data["CheckpointLoaderSimple"]["input"]["required"]["ckpt_name"][0]
         return {"checkpoints": ckpts}
     except Exception as e:
         return {"checkpoints": [], "error": str(e)}
+
+# ── Project DB ───────────────────────────────────────────────────────────────
+
+@app.get("/comfy/projects")
+async def comfy_list_projects():
+    data = _load_comfy_projects()
+    summaries = []
+    for p in data["projects"]:
+        summaries.append({
+            "id": p["id"],
+            "name": p["name"],
+            "description": p.get("description", ""),
+            "category": p.get("category", "general"),
+            "tags": p.get("tags", []),
+            "created_at": p["created_at"],
+            "updated_at": p["updated_at"],
+            "version_count": len(p.get("versions", [])),
+            "latest_version": p["versions"][-1]["version"] if p.get("versions") else 0,
+        })
+    return {"projects": sorted(summaries, key=lambda x: x["updated_at"], reverse=True)}
+
+@app.post("/comfy/projects")
+async def comfy_create_project(body: dict = Body(...)):
+    data = _load_comfy_projects()
+    import uuid as _uuid
+    now = datetime.utcnow().isoformat() + "Z"
+    project = {
+        "id": str(_uuid.uuid4()),
+        "name": body.get("name", "Untitled Project"),
+        "description": body.get("description", ""),
+        "category": body.get("category", "general"),
+        "tags": body.get("tags", []),
+        "created_at": now,
+        "updated_at": now,
+        "versions": [],
+    }
+    if body.get("workflow") is not None:
+        project["versions"].append({
+            "version": 1,
+            "saved_at": now,
+            "note": body.get("note", "Initial save"),
+            "workflow": body["workflow"],
+        })
+    data["projects"].append(project)
+    _save_comfy_projects(data)
+    return project
+
+@app.get("/comfy/projects/{project_id}")
+async def comfy_get_project(project_id: str):
+    data = _load_comfy_projects()
+    p = next((x for x in data["projects"] if x["id"] == project_id), None)
+    if not p:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return p
+
+@app.put("/comfy/projects/{project_id}")
+async def comfy_update_project(project_id: str, body: dict = Body(...)):
+    data = _load_comfy_projects()
+    p = next((x for x in data["projects"] if x["id"] == project_id), None)
+    if not p:
+        raise HTTPException(status_code=404, detail="Project not found")
+    now = datetime.utcnow().isoformat() + "Z"
+    if "name" in body: p["name"] = body["name"]
+    if "description" in body: p["description"] = body["description"]
+    if "category" in body: p["category"] = body["category"]
+    if "tags" in body: p["tags"] = body["tags"]
+    p["updated_at"] = now
+    if body.get("workflow") is not None:
+        next_ver = (p["versions"][-1]["version"] + 1) if p.get("versions") else 1
+        p["versions"].append({
+            "version": next_ver,
+            "saved_at": now,
+            "note": body.get("note", f"Version {next_ver}"),
+            "workflow": body["workflow"],
+        })
+    _save_comfy_projects(data)
+    return p
+
+@app.delete("/comfy/projects/{project_id}")
+async def comfy_delete_project(project_id: str):
+    data = _load_comfy_projects()
+    before = len(data["projects"])
+    data["projects"] = [x for x in data["projects"] if x["id"] != project_id]
+    if len(data["projects"]) == before:
+        raise HTTPException(status_code=404, detail="Project not found")
+    _save_comfy_projects(data)
+    return {"deleted": project_id}
+
+@app.get("/comfy/projects/{project_id}/versions/{version}")
+async def comfy_get_version(project_id: str, version: int):
+    data = _load_comfy_projects()
+    p = next((x for x in data["projects"] if x["id"] == project_id), None)
+    if not p:
+        raise HTTPException(status_code=404, detail="Project not found")
+    v = next((x for x in p.get("versions", []) if x["version"] == version), None)
+    if not v:
+        raise HTTPException(status_code=404, detail="Version not found")
+    return v
 
 
 # ═══════════════════════════════════════════════════════
