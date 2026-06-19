@@ -3365,26 +3365,33 @@ _PAPER_CACHE: dict = {"papers": [], "fetched_at": 0.0}
 _PAPER_CACHE_TTL = 6 * 3600  # 6 hours
 
 _AVATAR_SEARCH_QUERIES = [
-    "ti:talking+head",
-    "ti:avatar+synthesis",
-    "ti:portrait+video",
-    "ti:lip+sync",
-    "ti:digital+human+generation",
-    "ti:face+animation+diffusion",
+    "talking head",
+    "avatar synthesis",
+    "portrait video generation",
+    "lip sync diffusion",
+    "digital human generation",
+    "face animation neural",
+    "audio driven portrait",
+    "video diffusion person",
 ]
 
 
-def _fetch_arxiv_batch(query: str, max_results: int = 15) -> list:
-    date_filter = "AND+submittedDate:[20251101+TO+20261231]"
-    url = (
-        f"http://export.arxiv.org/api/query"
-        f"?search_query={query}+{date_filter}"
-        f"&sortBy=submittedDate&sortOrder=descending&max_results={max_results}"
-    )
+def _fetch_arxiv_batch(query: str, max_results: int = 12) -> list:
+    # Use requests so params are URL-encoded correctly (no bracket/plus issues)
+    search_q = f'ti:"{query}"'
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "BERYL/1.0 (research scraper)"})
-        with urllib.request.urlopen(req, timeout=12) as resp:
-            xml_data = resp.read()
+        r = requests.get(
+            "https://export.arxiv.org/api/query",
+            params={
+                "search_query": search_q,
+                "sortBy": "submittedDate",
+                "sortOrder": "descending",
+                "max_results": max_results,
+            },
+            timeout=15,
+            headers={"User-Agent": "BERYL/1.0 (arxiv-research-scroller)"},
+        )
+        xml_data = r.content
     except Exception:
         return []
 
