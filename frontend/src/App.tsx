@@ -30,6 +30,9 @@ import FlipMode from './components/FlipMode';
 import GenSherman from './components/GenSherman';
 import KrewePage from './components/krewe/KrewePage';
 import BottomNav from './components/BottomNav';
+import PaperBanner from './components/krewe/PaperBanner';
+import PaperOverlay from './components/krewe/PaperOverlay';
+import type { ArxivPaper } from './components/krewe/PaperBanner';
 import { Settings, Monitor, Zap, Cpu, Wand2, TerminalSquare, BookOpen, FolderOpen, X, Sparkles } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -41,6 +44,8 @@ const App: React.FC = () => {
   const [isFileMenuOpen, setIsFileMenuOpen] = useState(false);
   const [isVoiceOpen, setIsVoiceOpen] = useState(true);
   const [currentPage, setCurrentPage] = useState<'chat' | 'hf' | 'gpu' | 'studio' | 'cli' | 'docs' | 'ollama' | 'comfy' | 'fliip' | 'sherman' | 'krewe'>('chat');
+  const [activePaper, setActivePaper] = useState<ArxivPaper | null>(null);
+  const [pendingSquad, setPendingSquad] = useState<{ dolls: string[]; edges: [string, string][]; goal: string; note: string } | null>(null);
 
   const handleAddModel = (modelId: string) => {
     const author = modelId.split('/')[0];
@@ -90,7 +95,7 @@ const App: React.FC = () => {
       case 'sherman':
         return <GenSherman />;
       case 'krewe':
-        return <KrewePage />;
+        return <KrewePage pendingSquad={pendingSquad} onSquadConsumed={() => setPendingSquad(null)} />;
       default:
         return null;
     }
@@ -99,6 +104,19 @@ const App: React.FC = () => {
   return (
     <ErrorBoundary>
     <div className="flex flex-col h-screen bg-midnight-950 text-slate-100 overflow-hidden">
+      {/* Research Paper Banner — above nav */}
+      <PaperBanner onSelect={setActivePaper} />
+      {activePaper && (
+        <PaperOverlay
+          paper={activePaper}
+          onClose={() => setActivePaper(null)}
+          onSquadIt={(dolls, edges, goal, note) => {
+            setPendingSquad({ dolls, edges: edges as [string, string][], goal, note });
+            setCurrentPage('krewe');
+            setActivePaper(null);
+          }}
+        />
+      )}
       {/* Top Header */}
       <header className="flex items-center justify-between px-4 py-2 bg-midnight-900 border-b border-midnight-800 drag shrink-0 relative">
         <div className="flex items-center space-x-3 mr-2">

@@ -21,9 +21,6 @@ import type { PortfolioEntry } from './VanityGallery';
 import AssemblyLine from './AssemblyLine';
 import GalleryView from './GalleryView';
 import type { AssemblyEntry, AssemblyStats } from './types';
-import PaperBanner from './PaperBanner';
-import PaperOverlay from './PaperOverlay';
-import type { ArxivPaper } from './PaperBanner';
 import { KREWE_ROSTER, rosterToData, AVATAR_PIPELINE } from './roster';
 import type { RosterEntry } from './roster';
 import { API } from '../../api';
@@ -74,8 +71,11 @@ function topoOrder(ids: string[], edges: Edge[]): string[] {
 
 function wait(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 
+interface PendingSquad { dolls: string[]; edges: [string, string][]; goal: string; note: string; }
+interface KreweCanvasProps { pendingSquad?: PendingSquad | null; onSquadConsumed?: () => void; }
+
 // ── Main canvas component ────────────────────────────────────────────────────
-function KreweCanvas() {
+function KreweCanvas({ pendingSquad, onSquadConsumed }: KreweCanvasProps = {}) {
   const [nodes, setNodes, onNodesChange] = useNodesState<DollNodeType>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const idCounter = useRef(0);
@@ -117,8 +117,6 @@ function KreweCanvas() {
   const [reportEntry, setReportEntry] = useState<PortfolioEntry | null>(null);
   const [lastGoal, setLastGoal] = useState('');
   const [lastHealth, setLastHealth] = useState({ total: 0, done: 0, failed: 0 });
-  const [activePaper, setActivePaper] = useState<ArxivPaper | null>(null);
-
   // ── callbacks passed into DollData (stable refs) ──────────────────────────
   const openConfig = useCallback((id: string, section: 'head' | 'torso' | 'purse') => {
     setConfigTarget({ id, section });
@@ -583,23 +581,20 @@ function KreweCanvas() {
     setLastErrors([]);
   }, [setNodes, setEdges]);
 
-  const handlePaperSquadIt = useCallback((
-    dolls: string[],
-    edges: [string, string][],
-    goal: string,
-    note: string,
-  ) => {
-    applyPlan(dolls, edges);
-    setLastGoal(goal);
+  React.useEffect(() => {
+    if (!pendingSquad) return;
+    applyPlan(pendingSquad.dolls, pendingSquad.edges);
+    setLastGoal(pendingSquad.goal);
     setLeftTab('build');
     setChat((c) => [
       ...c,
       {
         role: 'assistant' as const,
-        text: `📄 **SQUAD IT applied!**\n\n${goal}\n\n${note}\n\nHit **SQUAD UP** to test the science.`,
+        text: `📄 **SQUAD IT applied!**\n\n${pendingSquad.goal}\n\n${pendingSquad.note}\n\nHit **SQUAD UP** to test the science.`,
       },
     ]);
-  }, [applyPlan]);
+    onSquadConsumed?.();
+  }, [pendingSquad]);
 
   // ── Vanity speak callback (from chat) ────────────────────────────────────
   const onSpeakLine = useCallback((line: string) => {
@@ -624,21 +619,6 @@ function KreweCanvas() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden bg-midnight-950">
-      {/* ── RESEARCH PAPER BANNER ─────────────────────────────────────────── */}
-      <PaperBanner onSelect={setActivePaper} />
-
-      {/* ── PAPER OVERLAY ─────────────────────────────────────────────────── */}
-      {activePaper && (
-        <PaperOverlay
-          paper={activePaper}
-          onClose={() => setActivePaper(null)}
-          onSquadIt={(dolls, edges, goal, note) => {
-            handlePaperSquadIt(dolls, edges as [string, string][], goal, note);
-            setActivePaper(null);
-          }}
-        />
-      )}
-
       <div className="flex flex-1 overflow-hidden">
       {/* ── LEFT RAIL ──────────────────────────────────────────────────────── */}
       <div className="w-[300px] shrink-0 border-r border-midnight-800 flex flex-col bg-midnight-900">
@@ -1001,10 +981,10 @@ const Lbl: React.FC<{ label: string; children: React.ReactNode }> = ({ label, ch
   </div>
 );
 
-export default function KrewePage() {
+export default function KrewePage({ pendingSquad, onSquadConsumed }: KreweCanvasProps = {}) {
   return (
     <ReactFlowProvider>
-      <KreweCanvas />
+      <KreweCanvas pendingSquad={pendingSquad} onSquadConsumed={onSquadConsumed} />
     </ReactFlowProvider>
   );
 }
