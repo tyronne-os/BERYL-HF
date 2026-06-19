@@ -2,6 +2,7 @@ import React, { memo, useState, useRef, useEffect } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import type { NodeProps, Node } from '@xyflow/react';
 import { AlertCircle, Clock, ChevronDown, Check, Zap } from 'lucide-react';
+import Doll3D from './Doll3D';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DOLL NODE v2 — Real-time connectivity indicators + model-swap dropdown
@@ -174,22 +175,6 @@ const STATUS_BORDER: Record<string, string> = {
   error:   'border-[#ff2244]',
 };
 
-// ── Headwear sub-component ───────────────────────────────────────────────────
-const Headwear: React.FC<{ kind: string; accent: string }> = ({ kind, accent }) => {
-  switch (kind) {
-    case 'crown':
-      return <path d="M58 22 L62 12 L70 19 L80 8 L90 19 L98 12 L102 22 Z" fill="#f5d76e" stroke="#b8860b" strokeWidth="1" />;
-    case 'cap':
-      return <path d="M56 26 Q80 6 104 26 L104 30 L56 30 Z" fill={accent} />;
-    case 'beret':
-      return <ellipse cx="80" cy="20" rx="26" ry="11" fill={accent} />;
-    case 'helmet':
-      return <path d="M55 28 Q80 4 105 28 Z" fill={accent} />;
-    default:
-      return null;
-  }
-};
-
 // ── Main DollNode component ──────────────────────────────────────────────────
 function DollNodeInner({ id, data, selected }: NodeProps<DollNodeType>) {
   const u = UNIFORMS[data.uniform] ?? UNIFORMS.executive;
@@ -214,24 +199,10 @@ function DollNodeInner({ id, data, selected }: NodeProps<DollNodeType>) {
 
   const models = ROLE_MODELS[data.role] ?? ROLE_MODELS['Brain'];
 
-  const open = (section: 'head' | 'purse' | 'torso') => (e: React.MouseEvent) => {
-    e.stopPropagation();
-    data.onOpen?.(id, section);
-  };
-
   const swapModel = (modelId: string) => {
     data.onSwapModel?.(id, modelId);
     setShowModels(false);
   };
-
-  // torso glow filter for the SVG only
-  const svgFilter = running
-    ? 'drop-shadow(0 0 12px rgba(212,175,55,0.8))'
-    : done
-    ? 'drop-shadow(0 0 8px rgba(0,255,136,0.6))'
-    : error
-    ? 'drop-shadow(0 0 8px rgba(255,34,68,0.6))'
-    : 'none';
 
   return (
     <div className="relative" style={{ width: 168 }}>
@@ -253,7 +224,7 @@ function DollNodeInner({ id, data, selected }: NodeProps<DollNodeType>) {
       <div
         className={`rounded-2xl border transition-all duration-300 ${STATUS_BORDER[status]}`}
         style={{
-          background: 'linear-gradient(160deg, #13091e 0%, #0d0614 100%)',
+          background: 'linear-gradient(160deg, #1A1F2A 0%, #0E1117 100%)',
           boxShadow: STATUS_SHADOW[status],
         }}
       >
@@ -278,72 +249,17 @@ function DollNodeInner({ id, data, selected }: NodeProps<DollNodeType>) {
                style={{ background: 'rgba(212,175,55,0.08)', animationDuration: '1.4s' }} />
         )}
 
-        {/* DOLL SVG */}
-        <div className="px-2 pt-2">
-          <svg viewBox="0 0 160 210" className="w-full" style={{ overflow: 'visible', filter: svgFilter }}>
-            {/* hair back */}
-            <ellipse cx="80" cy="48" rx="26" ry="30" fill={u.hair} />
-
-            {/* HEAD — click to configure persona */}
-            <g onClick={open('head')} style={{ cursor: 'pointer' }} className="nodrag">
-              <circle cx="80" cy="46" r="20" fill={u.skin} stroke={selected ? '#f5d76e' : 'transparent'} strokeWidth="1.5" />
-              <circle cx="73" cy="44" r="2" fill="#1a1208" />
-              <circle cx="87" cy="44" r="2" fill="#1a1208" />
-              <path d="M74 54 Q80 58 86 54" stroke="#1a1208" strokeWidth="1.5" fill="none" strokeLinecap="round" />
-              <path d="M58 44 Q60 22 80 22 Q100 22 102 44 Q96 34 80 34 Q64 34 58 44 Z" fill={u.hair} />
-              <Headwear kind={u.crown} accent={u.accent} />
-            </g>
-
-            {/* neck */}
-            <rect x="74" y="64" width="12" height="10" fill={u.skin} />
-
-            {/* TORSO — the model/engine */}
-            <g onClick={open('torso')} style={{ cursor: 'pointer' }} className="nodrag">
-              {isGown ? (
-                <path d="M62 74 L98 74 L116 188 L44 188 Z" fill={u.dress} />
-              ) : (
-                <path d="M60 74 L100 74 L104 170 L56 170 Z" fill={u.dress} />
-              )}
-              {/* sash */}
-              <path d="M64 76 L96 76 L108 110 L76 110 Z" fill="#f5f0e6" opacity="0.9" />
-              <text x="86" y="98" fontSize="9" fontWeight="700" fill={u.accent}
-                    transform="rotate(46 86 98)" textAnchor="middle" letterSpacing="0.5">
-                {data.name.slice(0, 9).toUpperCase()}
-              </text>
-              <text x="80" y={isGown ? 150 : 140} fontSize="20" textAnchor="middle">{u.icon}</text>
-            </g>
-
-            {/* ARMS */}
-            <path d="M62 80 Q30 96 12 130" stroke={u.skin} strokeWidth="8" fill="none" strokeLinecap="round" />
-            <path d="M98 80 Q130 96 148 130" stroke={u.skin} strokeWidth="8" fill="none" strokeLinecap="round" />
-
-            {/* PURSE — tools */}
-            <g onClick={open('purse')} style={{ cursor: 'pointer' }} className="nodrag">
-              <path d="M96 78 Q120 112 110 150" stroke={u.accent} strokeWidth="2" fill="none" opacity="0.7" />
-              <rect x="100" y="146" width="26" height="20" rx="4"
-                    fill={data.purseActive ? '#f5d76e' : u.accent}
-                    stroke="#0d0614" strokeWidth="1.5">
-                {data.purseActive && (
-                  <animate attributeName="opacity" values="1;0.3;1" dur="0.45s" repeatCount="indefinite" />
-                )}
-              </rect>
-              <path d="M105 146 Q113 138 121 146" stroke="#0d0614" strokeWidth="1.5" fill="none" />
-              {data.tools.length > 0 && (
-                <text x="113" y="160" fontSize="9" fontWeight="700" textAnchor="middle" fill="#0d0614">
-                  {data.tools.length}
-                </text>
-              )}
-            </g>
-
-            {/* done: green checkmark overlay */}
-            {done && (
-              <circle cx="80" cy="46" r="11" fill="#00ff88" opacity="0.18" />
-            )}
-            {/* error: red X overlay */}
-            {error && (
-              <circle cx="80" cy="46" r="11" fill="#ff2244" opacity="0.18" />
-            )}
-          </svg>
+        {/* DOLL — 3D figurine (front-facing, lit for depth) */}
+        <div className="px-2 pt-3 nodrag nopan nowheel">
+          <Doll3D
+            uniform={u}
+            isGown={isGown}
+            status={status}
+            icon={u.icon}
+            onHead={() => data.onOpen?.(id, 'head')}
+            onTorso={() => data.onOpen?.(id, 'torso')}
+            onPurse={() => data.onOpen?.(id, 'purse')}
+          />
         </div>
 
         {/* name + role labels */}

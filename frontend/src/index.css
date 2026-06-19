@@ -1,53 +1,68 @@
 @import "tailwindcss";
 
+/* ════════════════════════════════════════════════════════════════════════
+   BERYL HF — "Claude Dusk" theme
+   Clean graphite surfaces · warm ember accent · functional semantic colors.
+   The whole app is themed from these CSS variables — every page inherits it.
+   ════════════════════════════════════════════════════════════════════════ */
 @theme {
-  /* Custom Names */
-  --color-midnight-950: #0d0614;
-  --color-midnight-900: #1a0b2e;
-  --color-midnight-800: #2d134d;
-  --color-oldgold-400: #D4AF37;
-  --color-oldgold-500: #B8860B;
-  --color-oldgold-600: #8a6308;
-  --color-oldgold-900: #3d2a02;
+  /* ── Surfaces — neutral cool graphite (replaces muddy purple) ───────────── */
+  --color-midnight-950: #0A0C10;  /* app background */
+  --color-midnight-900: #12151C;  /* panels, header, footer */
+  --color-midnight-800: #1E222B;  /* borders, raised surfaces */
 
-  /* Global Overrides: Midnight Purple Base */
-  --color-slate-950: #0d0614;
-  --color-slate-900: #1a0b2e;
-  --color-slate-800: #2d134d;
-  --color-slate-700: #3f1a6b;
-  --color-slate-600: #55278c;
-  
-  /* Global Overrides: Old Gold Accents */
-  --color-blue-400: #D4AF37;
-  --color-blue-500: #B8860B;
-  --color-blue-600: #8a6308;
-  --color-blue-700: #614404;
-  --color-blue-900: #3d2a02;
+  /* ── Primary accent — warm ember / clay (Claude warmth, replaces gold) ──── */
+  --color-oldgold-400: #F4A98A;   /* bright ember — text & icons on dark */
+  --color-oldgold-500: #E8835A;   /* primary — buttons, active nav */
+  --color-oldgold-600: #CC6B43;   /* hover / pressed */
+  --color-oldgold-900: #3A2018;   /* deep ember tint background */
 
-  --color-emerald-400: #D4AF37;
-  --color-emerald-500: #B8860B;
-  --color-emerald-600: #8a6308;
-  --color-emerald-900: #3d2a02;
+  /* ── Neutral slate scale (clean cool grays, replaces purple) ────────────── */
+  --color-slate-950: #0A0C10;
+  --color-slate-900: #12151C;
+  --color-slate-800: #1E222B;
+  --color-slate-700: #2B303B;
+  --color-slate-600: #3A4150;
+  --color-slate-500: #5B6371;
+  --color-slate-400: #8A93A3;
+  --color-slate-300: #B4BCC8;
+  --color-slate-200: #D4DAE2;
+  --color-slate-100: #E8ECF1;
 
-  --color-purple-400: #D4AF37;
-  --color-purple-500: #B8860B;
-  --color-purple-600: #8a6308;
-  --color-purple-900: #3d2a02;
+  /* ── Semantic colors restored (functional color coding) ─────────────────── */
+  --color-blue-400: #5BA8F5;
+  --color-blue-500: #3B8EF0;
+  --color-blue-600: #2D72D8;
+  --color-blue-700: #2159B0;
+  --color-blue-900: #16335F;
+
+  --color-emerald-400: #3DD6A0;
+  --color-emerald-500: #14B981;
+  --color-emerald-600: #0E9B6E;
+  --color-emerald-900: #064D38;
+
+  --color-purple-400: #B49BFB;
+  --color-purple-500: #9670F2;
+  --color-purple-600: #7C4FE0;
+  --color-purple-900: #3F2A6B;
 }
 
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: 'Inter var', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
   color-scheme: dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: var(--color-slate-950);
+  color: #E8ECF1;
+  background-color: var(--color-midnight-950);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  /* warm ember selection */
+  --accent-rgb: 232, 131, 90;
 }
 
 body {
@@ -56,33 +71,65 @@ body {
   place-content: center;
   min-width: 320px;
   min-height: 100vh;
-  background-color: var(--color-slate-950);
+  background-color: var(--color-midnight-950);
 }
 
-#root {
-  width: 100%;
-}
+#root { width: 100%; }
+
 @layer base {
   *, ::before, ::after {
-    border-color: var(--color-slate-800);
+    border-color: var(--color-midnight-800);
+  }
+  ::selection {
+    background: rgba(var(--accent-rgb), 0.28);
+    color: #fff;
   }
 }
 
+/* ── Modern thin scrollbars (ember on hover) ──────────────────────────────── */
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #2B303B transparent;
+  }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: #2B303B;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(var(--accent-rgb), 0.6);
+    background-clip: padding-box;
+  }
+}
+
+/* ── Animations ───────────────────────────────────────────────────────────── */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(-6px); }
   to { opacity: 1; transform: translateY(0); }
 }
-
 @keyframes slideIn {
   from { opacity: 0; transform: translateX(20px); }
   to { opacity: 1; transform: translateX(0); }
 }
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
 
 @layer utilities {
-  .nav-flash {
-    position: relative;
-    overflow: hidden;
+  /* soft glass panel */
+  .glass {
+    background: rgba(18, 21, 28, 0.72);
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
   }
+
+  /* nav ripple — ember */
+  .nav-flash { position: relative; overflow: hidden; }
   .nav-flash::after {
     content: '';
     position: absolute;
@@ -90,7 +137,7 @@ body {
     left: 50%;
     width: 0;
     height: 0;
-    background: rgba(212, 175, 55, 0.4);
+    background: rgba(var(--accent-rgb), 0.35);
     border-radius: 50%;
     transform: translate(-50%, -50%);
     transition: width 0.4s ease-out, height 0.4s ease-out, opacity 0.4s ease-out;
@@ -104,4 +151,3 @@ body {
     transition: width 0.3s ease-out, height 0.3s ease-out, opacity 0.2s ease-in;
   }
 }
-

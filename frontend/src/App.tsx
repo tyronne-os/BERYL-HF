@@ -43,7 +43,7 @@ const App: React.FC = () => {
   const [isComputerUseEnabled, setIsComputerUseEnabled] = useState(false);
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [isFileMenuOpen, setIsFileMenuOpen] = useState(false);
-  const [isVoiceOpen, setIsVoiceOpen] = useState(true);
+  const [isVoiceOpen, setIsVoiceOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState<'chat' | 'hf' | 'gpu' | 'studio' | 'cli' | 'docs' | 'ollama' | 'comfy' | 'fliip' | 'sherman' | 'krewe' | 'research'>('chat');
   const [activePaper, setActivePaper] = useState<ArxivPaper | null>(null);
   const [pendingSquad, setPendingSquad] = useState<{ dolls: string[]; edges: [string, string][]; goal: string; note: string } | null>(null);
@@ -62,8 +62,8 @@ const App: React.FC = () => {
       case 'chat':
         return (
           <main className="flex flex-1 overflow-hidden relative">
-            {/* Command Rail (33%) */}
-            <div className="w-[33%] border-r border-midnight-800 flex flex-col min-w-[320px] z-10">
+            {/* Command Rail (~half width — more room for the preview) */}
+            <div className="w-[17%] border-r border-midnight-800 flex flex-col min-w-[280px] z-10">
               <BerylBuilder
                 model={selectedModel}
                 isComputerUseEnabled={isComputerUseEnabled}
@@ -71,8 +71,8 @@ const App: React.FC = () => {
               />
             </div>
 
-            {/* Live Viewport (66%) */}
-            <div className="w-[67%] flex flex-col bg-slate-950 relative">
+            {/* Live Viewport (expanded) */}
+            <div className="flex-1 flex flex-col bg-midnight-950 relative">
               <CanvasPane artifact={currentArtifact} />
             </div>
           </main>
@@ -284,8 +284,26 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Global Voice Agent — right panel */}
+      {/* Global Voice Agent — slides in from the right when summoned */}
       <VoiceAgent onArtifactCreated={setCurrentArtifact} isOpen={isVoiceOpen} onClose={() => setIsVoiceOpen(false)} currentArtifact={currentArtifact} />
+
+      {/* O.V.E summon orb — floats bottom-right until you need the voice agent */}
+      {!isVoiceOpen && (
+        <button
+          onClick={() => setIsVoiceOpen(true)}
+          title="Summon O.V.E voice agent"
+          className="group fixed bottom-20 right-5 z-[60] w-14 h-14 rounded-full flex items-center justify-center transition-transform hover:scale-110 active:scale-95"
+          style={{
+            background: 'radial-gradient(circle at 32% 28%, #F4A98A, #E8835A 45%, #B85333 100%)',
+            boxShadow: '0 8px 24px rgba(232,131,90,0.45), inset 0 1px 3px rgba(255,255,255,0.4)',
+          }}
+        >
+          {/* breathing presence rings */}
+          <span className="absolute inset-0 rounded-full animate-ping" style={{ background: 'rgba(232,131,90,0.35)', animationDuration: '2.4s' }} />
+          <span className="absolute -inset-1 rounded-full border border-oldgold-400/40 group-hover:border-oldgold-400/70 transition-colors" />
+          <Sparkles className="w-6 h-6 text-white relative z-10 drop-shadow" />
+        </button>
+      )}
 
       {/* Global Bottom Navigation Footer */}
       <BottomNav currentPage={currentPage} setCurrentPage={setCurrentPage} selectedModel={selectedModel} />
