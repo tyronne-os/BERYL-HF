@@ -12,7 +12,7 @@ import pyautogui
 from collections import deque
 from PIL import Image
 from io import BytesIO
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Body
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -1693,34 +1693,160 @@ async def cli_exec(req: CliRequest):
 # ═══════════════════════════════════════════════════════
 USAGE = {"by_model": {}, "session_start": None}
 
+# ── Inference pricing (estimated provider rates, USD per 1M tokens: input, output)
+# Editable via PUT /pricing. Local/Ollama models are free.
+_MODEL_PRICING: Dict[str, list] = {
+    "MiniMaxAI/MiniMax-M3":             [0.30, 1.20],
+    "MiniMaxAI/MiniMax-M2.7":           [0.20, 0.80],
+    "zai-org/GLM-4.6":                  [0.60, 2.00],
+    "Qwen/Qwen2.5-72B-Instruct":        [0.35, 0.40],
+    "Qwen/Qwen2.5-Coder-32B-Instruct":  [0.18, 0.18],
+    "meta-llama/Llama-Guard-3-8B":      [0.10, 0.10],
+    "microsoft/Phi-3-mini-4k-instruct": [0.05, 0.05],
+}
+_DEFAULT_PRICING = [0.50, 1.00]  # unknown hosted HF model fallback
+
+def _price_for(model: str) -> list:
+    if not model or model.startswith("ollama/") or "/" not in model:
+        return [0.0, 0.0]   # local models are free
+    return _MODEL_PRICING.get(model, _DEFAULT_PRICING)
+
+def _cost_for(model: str, prompt_toks: int, completion_toks: int) -> float:
+    pin, pout = _price_for(model)
+    return (prompt_toks / 1_000_000) * pin + (completion_toks / 1_000_000) * pout
+
+# ── Persistent per-model ledger ("models I've tried / love") ─────────────────
+_MODEL_LEDGER_PATH = os.path.join(os.path.dirname(__file__), "model_usage.json")
+
+def _load_ledger() -> dict:
+    try:
+        with open(_MODEL_LEDGER_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _save_ledger(d: dict):
+    try:
+        with open(_MODEL_LEDGER_PATH, "w", encoding="utf-8") as f:
+            json.dump(d, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
+_MODEL_LEDGER: dict = _load_ledger()
+
 def _approx_tokens(text: str) -> int:
     # ~4 chars per token heuristic (no tokenizer dependency)
     return max(1, len(text) // 4)
 
 def _record_usage(model: str, prompt_text: str, completion_text: str):
     import time as _t
+    now = _t.time()
     if USAGE["session_start"] is None:
-        USAGE["session_start"] = _t.time()
-    entry = USAGE["by_model"].setdefault(model, {"prompt": 0, "completion": 0, "calls": 0})
-    entry["prompt"] += _approx_tokens(prompt_text)
-    entry["completion"] += _approx_tokens(completion_text)
+        USAGE["session_start"] = now
+    p_tok = _approx_tokens(prompt_text)
+    c_tok = _approx_tokens(completion_text)
+    cost = _cost_for(model, p_tok, c_tok)
+
+    # session ledger (resets each run)
+    entry = USAGE["by_model"].setdefault(model, {"prompt": 0, "completion": 0, "calls": 0, "cost": 0.0})
+    entry["prompt"] += p_tok
+    entry["completion"] += c_tok
     entry["calls"] += 1
+    entry["cost"] = entry.get("cost", 0.0) + cost
+
+    # persistent lifetime ledger
+    iso = datetime.datetime.utcnow().isoformat() + "Z"
+    led = _MODEL_LEDGER.setdefault(model, {
+        "prompt": 0, "completion": 0, "calls": 0, "cost": 0.0,
+        "favorite": False, "first_used": iso, "last_used": iso,
+    })
+    led["prompt"] += p_tok
+    led["completion"] += c_tok
+    led["calls"] += 1
+    led["cost"] = led.get("cost", 0.0) + cost
+    led["last_used"] = iso
+    _save_ledger(_MODEL_LEDGER)
 
 @app.get("/usage")
 async def get_usage():
     import time as _t
     total_prompt = sum(v["prompt"] for v in USAGE["by_model"].values())
     total_completion = sum(v["completion"] for v in USAGE["by_model"].values())
+    total_cost = sum(v.get("cost", 0.0) for v in USAGE["by_model"].values())
     elapsed_min = ((_t.time() - USAGE["session_start"]) / 60) if USAGE["session_start"] else 0
     return {
         "by_model": USAGE["by_model"],
         "total_prompt": total_prompt,
         "total_completion": total_completion,
         "total": total_prompt + total_completion,
+        "total_cost": round(total_cost, 6),
         "calls": sum(v["calls"] for v in USAGE["by_model"].values()),
         "elapsed_min": round(elapsed_min, 2),
         "velocity_per_min": round((total_prompt + total_completion) / elapsed_min, 1) if elapsed_min > 0.05 else 0,
     }
+
+@app.get("/usage/models")
+async def get_model_ledger():
+    """Lifetime per-model usage + cost ledger — the 'models I've tried / love' tracker."""
+    rows = []
+    for model, v in _MODEL_LEDGER.items():
+        pin, pout = _price_for(model)
+        rows.append({
+            "model": model,
+            "calls": v.get("calls", 0),
+            "prompt": v.get("prompt", 0),
+            "completion": v.get("completion", 0),
+            "tokens": v.get("prompt", 0) + v.get("completion", 0),
+            "cost": round(v.get("cost", 0.0), 6),
+            "favorite": v.get("favorite", False),
+            "first_used": v.get("first_used"),
+            "last_used": v.get("last_used"),
+            "price_in": pin, "price_out": pout,
+            "is_local": pin == 0.0 and pout == 0.0,
+        })
+    # favorites first, then by spend, then by calls
+    rows.sort(key=lambda r: (not r["favorite"], -r["cost"], -r["calls"]))
+    return {"models": rows, "total_cost": round(sum(r["cost"] for r in rows), 6), "model_count": len(rows)}
+
+@app.post("/usage/models/favorite")
+async def toggle_model_favorite(body: dict = Body(...)):
+    model = body.get("model", "")
+    if model not in _MODEL_LEDGER:
+        raise HTTPException(status_code=404, detail="Model not in ledger yet — try it first")
+    _MODEL_LEDGER[model]["favorite"] = not _MODEL_LEDGER[model].get("favorite", False)
+    _save_ledger(_MODEL_LEDGER)
+    return {"model": model, "favorite": _MODEL_LEDGER[model]["favorite"]}
+
+@app.get("/usage/current")
+async def get_current_model_cost(model: str):
+    """Live session cost + rate for the model currently selected — for the bottom-left chip."""
+    s = USAGE["by_model"].get(model, {"prompt": 0, "completion": 0, "calls": 0, "cost": 0.0})
+    pin, pout = _price_for(model)
+    led = _MODEL_LEDGER.get(model, {})
+    return {
+        "model": model,
+        "session_cost": round(s.get("cost", 0.0), 6),
+        "session_calls": s.get("calls", 0),
+        "session_tokens": s.get("prompt", 0) + s.get("completion", 0),
+        "lifetime_cost": round(led.get("cost", 0.0), 6),
+        "favorite": led.get("favorite", False),
+        "price_in": pin, "price_out": pout,
+        "is_local": pin == 0.0 and pout == 0.0,
+    }
+
+@app.get("/pricing")
+async def get_pricing():
+    return {"pricing": _MODEL_PRICING, "default": _DEFAULT_PRICING, "unit": "USD per 1M tokens [input, output]"}
+
+@app.put("/pricing")
+async def set_pricing(body: dict = Body(...)):
+    model = body.get("model", "")
+    pin = float(body.get("price_in", 0))
+    pout = float(body.get("price_out", 0))
+    if not model:
+        raise HTTPException(status_code=400, detail="model required")
+    _MODEL_PRICING[model] = [pin, pout]
+    return {"model": model, "price_in": pin, "price_out": pout}
 
 
 # ═══════════════════════════════════════════════════════
@@ -1879,7 +2005,7 @@ async def comfy_list_projects():
 async def comfy_create_project(body: dict = Body(...)):
     data = _load_comfy_projects()
     import uuid as _uuid
-    now = datetime.utcnow().isoformat() + "Z"
+    now = datetime.datetime.utcnow().isoformat() + "Z"
     project = {
         "id": str(_uuid.uuid4()),
         "name": body.get("name", "Untitled Project"),
@@ -1915,7 +2041,7 @@ async def comfy_update_project(project_id: str, body: dict = Body(...)):
     p = next((x for x in data["projects"] if x["id"] == project_id), None)
     if not p:
         raise HTTPException(status_code=404, detail="Project not found")
-    now = datetime.utcnow().isoformat() + "Z"
+    now = datetime.datetime.utcnow().isoformat() + "Z"
     if "name" in body: p["name"] = body["name"]
     if "description" in body: p["description"] = body["description"]
     if "category" in body: p["category"] = body["category"]
@@ -2320,6 +2446,7 @@ _KREWE_ROLE_MODELS: Dict[str, List[str]] = {
     "Micro Agent":    ["smolagents", "ollama/mistral", "HuggingFaceH4/zephyr-7b-beta"],
     "Context Store":  ["faiss", "chromadb", "ollama/nomic-embed-text"],
     "Flow Router":    ["logic", "MiniMaxAI/MiniMax-M3"],
+    "AI Security":    ["meta-llama/Llama-Guard-3-8B", "MiniMaxAI/MiniMax-M3", "ibm-granite/granite-guardian-3.0-8b", "ollama/llama-guard3", "protectai/deberta-v3-base-prompt-injection-v2"],
 }
 
 @app.get("/krewe/models")
@@ -3458,6 +3585,153 @@ def krewe_papers(limit: int = 60):
     return {"papers": all_papers[:limit], "cached": False}
 
 
+# ── Keyword-filtered research feed ───────────────────────────────────────────
+_RESEARCH_KW_PATH = os.path.join(os.path.dirname(__file__), "research_keywords.json")
+_DEFAULT_KEYWORDS = [
+    "talking head", "lip sync", "portrait animation",
+    "diffusion avatar", "audio driven", "digital human",
+]
+# Cache keyed by the joined keyword set → {papers, fetched_at}
+_RESEARCH_CACHE: dict = {}
+
+
+def _load_keywords() -> list:
+    try:
+        with open(_RESEARCH_KW_PATH, "r", encoding="utf-8") as f:
+            kws = json.load(f).get("keywords", [])
+            return [k for k in kws if isinstance(k, str) and k.strip()]
+    except Exception:
+        return list(_DEFAULT_KEYWORDS)
+
+
+def _save_keywords(kws: list):
+    clean = []
+    for k in kws:
+        k = (k or "").strip()
+        if k and k.lower() not in [c.lower() for c in clean]:
+            clean.append(k)
+    with open(_RESEARCH_KW_PATH, "w", encoding="utf-8") as f:
+        json.dump({"keywords": clean}, f, indent=2, ensure_ascii=False)
+    return clean
+
+
+@app.get("/krewe/research/keywords")
+def krewe_get_keywords():
+    return {"keywords": _load_keywords()}
+
+
+@app.put("/krewe/research/keywords")
+def krewe_set_keywords(body: dict = Body(...)):
+    kws = body.get("keywords", [])
+    if not isinstance(kws, list):
+        raise HTTPException(status_code=400, detail="keywords must be a list of strings")
+    saved = _save_keywords(kws)
+    _RESEARCH_CACHE.clear()  # invalidate so next fetch uses new keywords
+    return {"keywords": saved}
+
+
+@app.get("/krewe/research/papers")
+def krewe_research_papers(limit: int = 80, refresh: bool = False):
+    """Papers matching the user's saved keywords (each keyword → an ArXiv title search)."""
+    keywords = _load_keywords()
+    if not keywords:
+        return {"papers": [], "keywords": [], "cached": False}
+
+    cache_key = "|".join(sorted(k.lower() for k in keywords))
+    now = time.time()
+    hit = _RESEARCH_CACHE.get(cache_key)
+    if hit and not refresh and (now - hit["fetched_at"]) < _PAPER_CACHE_TTL:
+        return {"papers": hit["papers"][:limit], "keywords": keywords, "cached": True}
+
+    all_papers: list = []
+    seen_ids: set = set()
+    for kw in keywords:
+        for p in _fetch_arxiv_batch(kw, max_results=10):
+            if p["arxiv_id"] not in seen_ids:
+                seen_ids.add(p["arxiv_id"])
+                p["matched_keyword"] = kw
+                all_papers.append(p)
+
+    all_papers.sort(key=lambda p: p.get("published", ""), reverse=True)
+    _RESEARCH_CACHE[cache_key] = {"papers": all_papers, "fetched_at": now}
+    return {"papers": all_papers[:limit], "keywords": keywords, "cached": False}
+
+
+# ── HF Trending papers (Breaking News segment of the scroller) ───────────────
+_HF_TRENDING_CACHE: dict = {"papers": [], "fetched_at": 0.0}
+_HF_TRENDING_TTL = 2 * 3600  # 2h — trending moves faster than the keyword feed
+
+
+def _fetch_hf_trending(limit: int = 10) -> list:
+    """Top papers on HuggingFace overall via the daily_papers API (sorted by upvotes)."""
+    try:
+        r = requests.get(
+            "https://huggingface.co/api/daily_papers",
+            params={"limit": max(limit * 3, 30)},
+            timeout=15,
+            headers={"User-Agent": "BERYL/1.0 (hf-trending)"},
+        )
+        items = r.json() if r.status_code == 200 else []
+    except Exception:
+        return []
+
+    out = []
+    for it in items:
+        p = it.get("paper", it) or {}
+        aid = p.get("id") or it.get("id") or ""
+        if not aid:
+            continue
+        authors = []
+        for a in (p.get("authors") or [])[:4]:
+            nm = a.get("name") if isinstance(a, dict) else str(a)
+            if nm:
+                authors.append(nm)
+        out.append({
+            "arxiv_id": aid,
+            "title": " ".join((p.get("title") or it.get("title") or "").split()),
+            "summary": (p.get("summary") or "")[:700],
+            "published": (it.get("publishedAt") or p.get("publishedAt") or "")[:10],
+            "authors": authors,
+            "categories": ["trending"],
+            "upvotes": p.get("upvotes") or it.get("upvotes") or 0,
+            "trending": True,
+            "hf_url": f"https://huggingface.co/papers/{aid}",
+            "arxiv_url": f"https://arxiv.org/abs/{aid}",
+            "pdf_url": f"https://arxiv.org/pdf/{aid}",
+        })
+    # Highest upvotes first
+    out.sort(key=lambda x: x.get("upvotes", 0), reverse=True)
+    return out[:limit]
+
+
+_HF_TRENDING_CACHE_SIZE = 30  # always cache a generous batch, slice on read
+
+
+def _get_trending_cached(limit: int) -> list:
+    now = time.time()
+    if _HF_TRENDING_CACHE["papers"] and (now - _HF_TRENDING_CACHE["fetched_at"]) < _HF_TRENDING_TTL:
+        return _HF_TRENDING_CACHE["papers"][:limit]
+    papers = _fetch_hf_trending(_HF_TRENDING_CACHE_SIZE)
+    if papers:
+        _HF_TRENDING_CACHE["papers"] = papers
+        _HF_TRENDING_CACHE["fetched_at"] = now
+    return papers[:limit]
+
+
+@app.get("/krewe/papers/trending")
+def krewe_trending_papers(limit: int = 10):
+    cached = bool(_HF_TRENDING_CACHE["papers"] and (time.time() - _HF_TRENDING_CACHE["fetched_at"]) < _HF_TRENDING_TTL)
+    return {"papers": _get_trending_cached(limit), "cached": cached}
+
+
+@app.get("/krewe/papers/feed")
+def krewe_paper_feed(trending_limit: int = 10, keyword_limit: int = 60):
+    """Combined scroller feed: HF top-N (breaking) + keyword-matched papers."""
+    breaking = _get_trending_cached(trending_limit)
+    matched = krewe_research_papers(limit=keyword_limit).get("papers", [])
+    return {"breaking": breaking, "matched": matched}
+
+
 @app.post("/krewe/papers/squad-it")
 def krewe_paper_squad_it(payload: dict):
     title = payload.get("title", "")
@@ -3501,4 +3775,12 @@ def krewe_paper_squad_it(payload: dict):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8001)
+    # Import-string + reload=True = hot reload on every save. Rapid dev mode.
+    # (Passing the app object directly silently disables reload — never do that.)
+    uvicorn.run(
+        "main:app",
+        host="127.0.0.1",
+        port=8001,
+        reload=True,
+        reload_dirs=[os.path.dirname(os.path.abspath(__file__))],
+    )

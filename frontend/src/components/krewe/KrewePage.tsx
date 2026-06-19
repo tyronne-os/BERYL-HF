@@ -17,6 +17,7 @@ import FlowEdge from './FlowEdge';
 import type { EdgeStatus } from './FlowEdge';
 import TheVanity from './TheVanity';
 import VanityGallery, { ReportOverlay } from './VanityGallery';
+import VoiceAgent from '../VoiceAgent';
 import type { PortfolioEntry } from './VanityGallery';
 import AssemblyLine from './AssemblyLine';
 import GalleryView from './GalleryView';
@@ -84,7 +85,8 @@ function KreweCanvas({ pendingSquad, onSquadConsumed }: KreweCanvasProps = {}) {
   const [configTarget, setConfigTarget] = useState<{ id: string; section: 'head' | 'torso' | 'purse' } | null>(null);
   const [running, setRunning] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [leftTab, setLeftTab] = useState<'build' | 'roster' | 'assembly'>('build');
+  const [leftTab, setLeftTab] = useState<'build' | 'assembly'>('build');
+  const [rightTab, setRightTab] = useState<'dolls' | 'vanity' | 'voice'>('dolls');
   const [rosterCat, setRosterCat] = useState<'avatar' | 'ai-infra' | 'all'>('all');
   const [showGallery, setShowGallery] = useState(false);
   const [assemblyStats, setAssemblyStats] = useState<AssemblyStats | null>(null);
@@ -620,12 +622,11 @@ function KreweCanvas({ pendingSquad, onSquadConsumed }: KreweCanvasProps = {}) {
   return (
     <div className="flex flex-col flex-1 overflow-hidden bg-midnight-950">
       <div className="flex flex-1 overflow-hidden">
-      {/* ── LEFT RAIL ──────────────────────────────────────────────────────── */}
-      <div className="w-[300px] shrink-0 border-r border-midnight-800 flex flex-col bg-midnight-900">
+      {/* ── LEFT RAIL (Foreman chat — reduced 33% for canvas space) ────────── */}
+      <div className="w-[200px] shrink-0 border-r border-midnight-800 flex flex-col bg-midnight-900">
         <div className="flex border-b border-midnight-800">
           {([
             ['build',    'Foreman',  <Bot className="w-3 h-3" />],
-            ['roster',   'Roster',   <Users className="w-3 h-3" />],
             ['assembly', 'Assembly', <Factory className="w-3 h-3" />],
           ] as const).map(([t, label, icon]) => (
             <button key={t} onClick={() => setLeftTab(t as any)}
@@ -688,69 +689,33 @@ function KreweCanvas({ pendingSquad, onSquadConsumed }: KreweCanvasProps = {}) {
               </div>
             </div>
           </div>
-        ) : leftTab === 'assembly' ? (
+        ) : (
           <AssemblyLine
             onEntryProduced={addAssemblyEntry}
             onStatsUpdate={setAssemblyStats}
           />
-        ) : (
-          <div className="flex-1 flex flex-col min-h-0">
-            {/* category filter */}
-            <div className="flex gap-1 p-2 border-b border-midnight-800">
-              {(['all', 'avatar', 'ai-infra'] as const).map((cat) => (
-                <button key={cat} onClick={() => setRosterCat(cat)}
-                  className={`flex-1 py-1 rounded text-[9px] font-bold uppercase tracking-wider transition-colors ${
-                    rosterCat === cat ? 'bg-oldgold-500 text-midnight-950' : 'text-slate-500 hover:text-slate-300 hover:bg-midnight-800'
-                  }`}>
-                  {cat === 'all' ? 'All' : cat === 'avatar' ? '🎭 Avatar' : '🤖 AI Infra'}
-                </button>
-              ))}
-            </div>
-            <div className="flex-1 overflow-y-auto p-2 space-y-2">
-              {rosterEntries.map((r) => {
-                const u = UNIFORMS[r.uniform];
-                return (
-                  <button key={r.key} onClick={() => addDoll(r)}
-                    className="w-full text-left p-2.5 rounded-xl bg-midnight-800/60 border border-midnight-700 hover:border-oldgold-500/60 hover:bg-midnight-800 transition-all group">
-                    <div className="flex items-center gap-2">
-                      <div className="w-9 h-9 rounded-lg flex items-center justify-center text-lg shrink-0"
-                           style={{ background: `${u.dress}33`, border: `1px solid ${u.accent}55` }}>{u.icon}</div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[12px] font-bold text-white truncate">{r.name}</span>
-                          {r.isGpu && <span className="px-1 py-0.5 rounded bg-amber-500 text-[7px] font-black text-midnight-950">GPU</span>}
-                        </div>
-                        <span className="text-[9px] text-oldgold-400/80 uppercase tracking-wider">{r.role}</span>
-                      </div>
-                      <Plus className="w-4 h-4 text-slate-600 group-hover:text-oldgold-400 shrink-0" />
-                    </div>
-                    <p className="text-[10px] text-slate-500 mt-1.5 leading-snug line-clamp-2">{r.blurb}</p>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
         )}
       </div>
 
-      {/* ── CANVAS ─────────────────────────────────────────────────────────── */}
-      <div className="flex-1 relative">
+      {/* ── CANVAS (white studio backdrop) ─────────────────────────────────── */}
+      <div className="flex-1 relative bg-white">
         <ReactFlow
           nodes={nodes} edges={edges}
           onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
           onConnect={onConnect} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
           fitView proOptions={{ hideAttribution: true }}
           defaultEdgeOptions={{ type: 'flow', data: { status: 'idle' } }}
+          style={{ background: '#ffffff' }}
         >
-          <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#2a2438" />
-          <Controls className="!bg-midnight-900 !border-midnight-700" />
+          <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d4d4d8" />
+          <Controls className="!bg-white !border-slate-300 !shadow-md" />
           <MiniMap
-            className="!bg-midnight-900 !border !border-midnight-700"
+            className="!bg-slate-100 !border !border-slate-300"
             nodeColor={(n) => {
               const s = (n.data as DollData)?.status;
-              return s === 'done' ? '#00ff88' : s === 'error' ? '#ff2244' : s === 'running' ? '#d4af37' : UNIFORMS[(n.data as DollData)?.uniform]?.dress || '#666';
+              return s === 'done' ? '#00b85f' : s === 'error' ? '#ff2244' : s === 'running' ? '#d4af37' : UNIFORMS[(n.data as DollData)?.uniform]?.dress || '#999';
             }}
-            maskColor="rgba(13,6,20,0.7)"
+            maskColor="rgba(0,0,0,0.08)"
           />
 
           {/* ── TOP TOOLBAR ────────────────────────────────────────────── */}
@@ -793,7 +758,7 @@ function KreweCanvas({ pendingSquad, onSquadConsumed }: KreweCanvasProps = {}) {
                 <Sparkles className="w-3.5 h-3.5" /> Avatar Squad
               </button>
 
-              <button onClick={() => setLeftTab('roster')}
+              <button onClick={() => setRightTab('dolls')}
                 className="px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1.5 text-slate-300 hover:text-oldgold-400 hover:bg-midnight-800 transition-colors">
                 <Plus className="w-3.5 h-3.5" /> Doll
               </button>
@@ -833,11 +798,11 @@ function KreweCanvas({ pendingSquad, onSquadConsumed }: KreweCanvasProps = {}) {
           {nodes.length === 0 && (
             <Panel position="top-center">
               <div className="mt-20 text-center pointer-events-none select-none">
-                <Users className="w-10 h-10 text-midnight-700 mx-auto mb-3" />
+                <Users className="w-10 h-10 text-slate-300 mx-auto mb-3" />
                 <p className="text-sm text-slate-500 font-medium">Canvas empty</p>
-                <p className="text-[11px] text-slate-600 mt-1">
-                  Ask the <span className="text-oldgold-400 font-bold">Foreman</span> or click
-                  <span className="text-oldgold-400 font-bold"> Avatar Squad</span>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Ask the <span className="text-oldgold-600 font-bold">Foreman</span> or open
+                  <span className="text-oldgold-600 font-bold"> Dolls</span> on the right
                 </p>
               </div>
             </Panel>
@@ -864,25 +829,92 @@ function KreweCanvas({ pendingSquad, onSquadConsumed }: KreweCanvasProps = {}) {
         />
       )}
 
-      {/* ── RIGHT RAIL: THE VANITY + PORTFOLIO ──────────────────────────── */}
-      <div className="w-[320px] shrink-0 border-l border-midnight-800 flex flex-col relative">
-        <TheVanity
-          faceUniform={avatar.faceUniform}
-          speaking={avatar.speaking}
-          line={avatar.line}
-          status={avatar.status}
-          fps={avatar.fps}
-          avatarContext={avatarContext}
-          onSpeakLine={onSpeakLine}
-        />
-        <VanityGallery
-          entries={portfolio}
-          saving={saving}
-          onDelete={deletePortfolioEntry}
-          onViewReport={setReportEntry}
-        />
-        {reportEntry && (
-          <ReportOverlay entry={reportEntry} onClose={() => setReportEntry(null)} />
+      {/* ── RIGHT RAIL: narrow tabbed panel (Dolls · Vanity · Voice) ──────── */}
+      <div className="w-1/5 min-w-[248px] max-w-[360px] shrink-0 border-l border-midnight-800 flex flex-col relative bg-midnight-900">
+        {/* tab strip */}
+        <div className="flex border-b border-midnight-800 shrink-0">
+          {([
+            ['dolls',  'Dolls',  <Users className="w-3 h-3" />],
+            ['vanity', 'Vanity', <Sparkles className="w-3 h-3" />],
+            ['voice',  'Voice',  <Bot className="w-3 h-3" />],
+          ] as const).map(([t, label, icon]) => (
+            <button key={t} onClick={() => setRightTab(t as any)}
+              className={`flex-1 py-2 text-[9px] font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-1 ${
+                rightTab === t ? 'text-oldgold-400 border-b-2 border-oldgold-400 bg-midnight-800/50' : 'text-slate-500 hover:text-slate-300'
+              }`}>
+              {icon}{label}
+            </button>
+          ))}
+        </div>
+
+        {/* ── DOLLS: vertical scrolling roster ── */}
+        {rightTab === 'dolls' && (
+          <div className="flex-1 flex flex-col min-h-0">
+            <div className="flex gap-1 p-2 border-b border-midnight-800 shrink-0">
+              {(['all', 'avatar', 'ai-infra'] as const).map((cat) => (
+                <button key={cat} onClick={() => setRosterCat(cat)}
+                  className={`flex-1 py-1 rounded text-[9px] font-bold uppercase tracking-wider transition-colors ${
+                    rosterCat === cat ? 'bg-oldgold-500 text-midnight-950' : 'text-slate-500 hover:text-slate-300 hover:bg-midnight-800'
+                  }`}>
+                  {cat === 'all' ? 'All' : cat === 'avatar' ? '🎭 Avatar' : '🤖 AI Infra'}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-2">
+              {rosterEntries.map((r) => {
+                const u = UNIFORMS[r.uniform];
+                return (
+                  <button key={r.key} onClick={() => addDoll(r)}
+                    className="w-full text-left p-2.5 rounded-xl bg-midnight-800/60 border border-midnight-700 hover:border-oldgold-500/60 hover:bg-midnight-800 transition-all group">
+                    <div className="flex items-center gap-2">
+                      <div className="w-9 h-9 rounded-lg flex items-center justify-center text-lg shrink-0"
+                           style={{ background: `${u.dress}33`, border: `1px solid ${u.accent}55` }}>{u.icon}</div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[12px] font-bold text-white truncate">{r.name}</span>
+                          {r.isGpu && <span className="px-1 py-0.5 rounded bg-amber-500 text-[7px] font-black text-midnight-950">GPU</span>}
+                        </div>
+                        <span className="text-[9px] text-oldgold-400/80 uppercase tracking-wider">{r.role}</span>
+                      </div>
+                      <Plus className="w-4 h-4 text-slate-600 group-hover:text-oldgold-400 shrink-0" />
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-1.5 leading-snug line-clamp-2">{r.blurb}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── VANITY: avatar preview + portfolio ── */}
+        {rightTab === 'vanity' && (
+          <div className="flex-1 flex flex-col min-h-0 relative">
+            <TheVanity
+              faceUniform={avatar.faceUniform}
+              speaking={avatar.speaking}
+              line={avatar.line}
+              status={avatar.status}
+              fps={avatar.fps}
+              avatarContext={avatarContext}
+              onSpeakLine={onSpeakLine}
+            />
+            <VanityGallery
+              entries={portfolio}
+              saving={saving}
+              onDelete={deletePortfolioEntry}
+              onViewReport={setReportEntry}
+            />
+            {reportEntry && (
+              <ReportOverlay entry={reportEntry} onClose={() => setReportEntry(null)} />
+            )}
+          </div>
+        )}
+
+        {/* ── VOICE: embedded O.V.E agent ── */}
+        {rightTab === 'voice' && (
+          <div className="flex-1 min-h-0">
+            <VoiceAgent embedded isOpen onClose={() => {}} onArtifactCreated={() => {}} currentArtifact={null} />
+          </div>
         )}
       </div>
       </div>{/* end inner flex row */}

@@ -27,6 +27,13 @@ backend/firewall_log.jsonl
 backend/banned_ips.json
 start_sherman_bg.bat
 
+# KREWE / cost-tracker runtime data (machine-specific, regenerated)
+backend/model_usage.json
+backend/research_keywords.json
+backend/comfy_projects.json
+backend/_boot_err.log
+backend/_boot_out.log
+
 # OS
 .DS_Store
 Thumbs.db

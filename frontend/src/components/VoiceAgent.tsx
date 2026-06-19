@@ -12,6 +12,7 @@ interface VoiceAgentProps {
   isOpen: boolean;
   onClose: () => void;
   currentArtifact?: { type: string; title: string; content: string } | null;
+  embedded?: boolean;  // when true, fills its container inline (no fixed overlay) — used in KREWE right-panel tab
 }
 
 interface Turn { who: 'user' | 'ove'; text: string; }
@@ -47,7 +48,7 @@ const applyPatches = (html: string, patches: any[]): string => {
 const WAKE_PHRASES = ['hey ove', 'hey o.v.e', 'o.v.e', 'hey eve', 'hey ov'];
 
 const VoiceAgent: React.FC<VoiceAgentProps> = ({
-  onArtifactCreated, isOpen, onClose, currentArtifact,
+  onArtifactCreated, isOpen, onClose, currentArtifact, embedded = false,
 }) => {
   const [isListening, setIsListening]       = useState(false);
   const [isProcessing, setIsProcessing]     = useState(false);
@@ -320,9 +321,11 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
 
       {/* ── Voice Panel ── */}
       <div
-        className={`fixed top-14 bottom-14 right-0 z-[55] w-80 transition-transform duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}
+        className={embedded
+          ? 'relative w-full h-full'
+          : `fixed top-14 bottom-14 right-0 z-[55] w-80 transition-transform duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}
       >
-        <div className="h-full bg-midnight-900/95 backdrop-blur-2xl border-l border-oldgold-500/30 shadow-[0_0_50px_rgba(212,175,55,0.12)] flex flex-col">
+        <div className={`h-full bg-midnight-900/95 backdrop-blur-2xl flex flex-col ${embedded ? '' : 'border-l border-oldgold-500/30 shadow-[0_0_50px_rgba(212,175,55,0.12)]'}`}>
 
           {/* Header */}
           <div className="p-3 bg-midnight-950/50 border-b border-midnight-800/50">

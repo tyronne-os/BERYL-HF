@@ -32,8 +32,9 @@ import KrewePage from './components/krewe/KrewePage';
 import BottomNav from './components/BottomNav';
 import PaperBanner from './components/krewe/PaperBanner';
 import PaperOverlay from './components/krewe/PaperOverlay';
+import ResearchPage from './components/krewe/ResearchPage';
 import type { ArxivPaper } from './components/krewe/PaperBanner';
-import { Settings, Monitor, Zap, Cpu, Wand2, TerminalSquare, BookOpen, FolderOpen, X, Sparkles } from 'lucide-react';
+import { Settings, Monitor, Zap, Cpu, Wand2, TerminalSquare, BookOpen, FolderOpen, X, Sparkles, FlaskConical } from 'lucide-react';
 
 const App: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState('MiniMaxAI/MiniMax-M3');
@@ -43,7 +44,7 @@ const App: React.FC = () => {
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [isFileMenuOpen, setIsFileMenuOpen] = useState(false);
   const [isVoiceOpen, setIsVoiceOpen] = useState(true);
-  const [currentPage, setCurrentPage] = useState<'chat' | 'hf' | 'gpu' | 'studio' | 'cli' | 'docs' | 'ollama' | 'comfy' | 'fliip' | 'sherman' | 'krewe'>('chat');
+  const [currentPage, setCurrentPage] = useState<'chat' | 'hf' | 'gpu' | 'studio' | 'cli' | 'docs' | 'ollama' | 'comfy' | 'fliip' | 'sherman' | 'krewe' | 'research'>('chat');
   const [activePaper, setActivePaper] = useState<ArxivPaper | null>(null);
   const [pendingSquad, setPendingSquad] = useState<{ dolls: string[]; edges: [string, string][]; goal: string; note: string } | null>(null);
 
@@ -96,6 +97,8 @@ const App: React.FC = () => {
         return <GenSherman />;
       case 'krewe':
         return <KrewePage pendingSquad={pendingSquad} onSquadConsumed={() => setPendingSquad(null)} />;
+      case 'research':
+        return <ResearchPage onSelect={setActivePaper} />;
       default:
         return null;
     }
@@ -104,8 +107,8 @@ const App: React.FC = () => {
   return (
     <ErrorBoundary>
     <div className="flex flex-col h-screen bg-midnight-950 text-slate-100 overflow-hidden">
-      {/* Research Paper Banner — above nav */}
-      <PaperBanner onSelect={setActivePaper} />
+      {/* Research scroller — above the nav, always visible */}
+      <PaperBanner onSelect={setActivePaper} onOpenResearch={() => setCurrentPage('research')} />
       {activePaper && (
         <PaperOverlay
           paper={activePaper}
@@ -185,6 +188,13 @@ const App: React.FC = () => {
           >
             <span className="text-[13px]">🤗</span>
             <span>HF</span>
+          </button>
+          <button
+            onClick={() => setCurrentPage('research')}
+            className={`nav-flash px-3 py-1 rounded-md text-[11px] font-bold transition-all flex items-center space-x-2 ${currentPage === 'research' ? 'bg-oldgold-500 text-midnight-950 shadow-[0_0_15px_rgba(212,175,55,0.4)]' : 'text-slate-400 hover:text-oldgold-400 hover:bg-midnight-800'}`}
+          >
+            <FlaskConical className="w-3.5 h-3.5" />
+            <span>RESEARCH</span>
           </button>
         </nav>
 
@@ -278,7 +288,7 @@ const App: React.FC = () => {
       <VoiceAgent onArtifactCreated={setCurrentArtifact} isOpen={isVoiceOpen} onClose={() => setIsVoiceOpen(false)} currentArtifact={currentArtifact} />
 
       {/* Global Bottom Navigation Footer */}
-      <BottomNav currentPage={currentPage} setCurrentPage={setCurrentPage} />
+      <BottomNav currentPage={currentPage} setCurrentPage={setCurrentPage} selectedModel={selectedModel} />
     </div>
     </ErrorBoundary>
   );

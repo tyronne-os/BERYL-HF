@@ -11,9 +11,10 @@ interface ModelSelectorProps {
 const ModelSelector: React.FC<ModelSelectorProps> = ({ selected, onSelect, additionalModels = [] }) => {
   const [isOpen, setIsOpen] = useState(false);
   
-  const primaryModels = [
+  const primaryModels: { id: string; author: string; role: string; label?: string }[] = [
     { id: 'MiniMaxAI/MiniMax-M3', author: 'MiniMaxAI', role: 'Default Brain' },
     { id: 'MiniMaxAI/MiniMax-M2.7', author: 'MiniMaxAI', role: 'Fast / Cheaper' },
+    { id: 'zai-org/GLM-4.6', author: 'Zhipu AI', role: 'Reasoning', label: 'GLM 5.2' },
     { id: 'Qwen/Qwen2.5-Coder-32B-Instruct', author: 'Qwen', role: 'Rapid Template' },
   ];
 
@@ -44,7 +45,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ selected, onSelect, addit
         onClick={() => setIsOpen(!isOpen)}
         className="flex items-center space-x-2 bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg border border-slate-600 transition-colors text-sm font-medium"
       >
-        <span>{selected.split('/').pop()}</span>
+        <span>{primaryModels.find(m => m.id === selected)?.label || selected.split('/').pop()}</span>
         <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
@@ -65,7 +66,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ selected, onSelect, addit
                 className={`w-full text-left px-4 py-3 hover:bg-slate-700 flex flex-col space-y-0.5 border-b border-slate-700/30 last:border-0 ${selected === model.id ? 'bg-slate-700/50 border-l-2 border-l-blue-500' : ''}`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-bold text-slate-100">{model.id.split('/').pop()}</span>
+                  <span className="text-sm font-bold text-slate-100">{model.label || model.id.split('/').pop()}</span>
                   <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded uppercase font-bold tracking-tighter">{model.role}</span>
                 </div>
                 <span className="text-xs text-slate-500">{model.author}</span>

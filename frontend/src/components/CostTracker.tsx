@@ -1,7 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { DollarSign, BarChart3, Server, RefreshCw, Wallet, Gauge, HardDrive, Cpu, Activity, Edit3, X, Save } from 'lucide-react';
+import { DollarSign, BarChart3, Server, RefreshCw, Wallet, Gauge, HardDrive, Cpu, Activity, Edit3, X, Save, Heart, Sparkles } from 'lucide-react';
 import { API } from '../api';
+
+interface ModelLedgerRow {
+  model: string;
+  calls: number;
+  prompt: number;
+  completion: number;
+  tokens: number;
+  cost: number;
+  favorite: boolean;
+  first_used: string | null;
+  last_used: string | null;
+  price_in: number;
+  price_out: number;
+  is_local: boolean;
+}
 
 interface Billing {
   plan: string;
@@ -38,6 +53,8 @@ const Bar: React.FC<{ used: number; total: number; color: string }> = ({ used, t
 const CostTracker: React.FC = () => {
   const [bill, setBill] = useState<Billing | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
+  const [ledger, setLedger] = useState<ModelLedgerRow[]>([]);
+  const [ledgerTotal, setLedgerTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Billing | null>(null);
@@ -58,10 +75,26 @@ const CostTracker: React.FC = () => {
     } catch (e) { /* backend may be warming */ }
   };
 
+  const fetchLedger = async () => {
+    try {
+      const { data } = await axios.get<{ models: ModelLedgerRow[]; total_cost: number }>(`${API}/usage/models`);
+      setLedger(data.models || []);
+      setLedgerTotal(data.total_cost || 0);
+    } catch (e) { /* backend may be warming */ }
+  };
+
+  const toggleFavorite = async (model: string) => {
+    try {
+      await axios.post(`${API}/usage/models/favorite`, { model });
+      fetchLedger();
+    } catch (e) { /* ignore */ }
+  };
+
   useEffect(() => {
     fetchBilling();
     fetchUsage();
-    const t = setInterval(fetchUsage, 5000);
+    fetchLedger();
+    const t = setInterval(() => { fetchUsage(); fetchLedger(); }, 5000);
     return () => clearInterval(t);
   }, []);
 
@@ -185,6 +218,68 @@ const CostTracker: React.FC = () => {
             </div>
           );
         })()}
+
+        {/* ── MODEL COST TRACKER — "Models I've Tried / Love" ── */}
+        <div className="mb-8 bg-slate-800 border border-oldgold-500/30 rounded-2xl p-6">
+          <div className="flex items-center justify-between mb-1 flex-wrap gap-3">
+            <h2 className="text-lg font-bold flex items-center space-x-2">
+              <BarChart3 className="w-5 h-5 text-oldgold-400" />
+              <span>Model Cost Tracker</span>
+              <span className="text-[10px] font-black px-2 py-0.5 rounded bg-oldgold-500/15 text-oldgold-400 border border-oldgold-500/30 tracking-widest">{ledger.length} TRIED</span>
+            </h2>
+            <div className="text-right">
+              <p className="text-[10px] text-slate-500 uppercase font-bold">Lifetime Inference Spend</p>
+              <p className="text-xl font-bold text-oldgold-400">${ledgerTotal.toFixed(4)}</p>
+            </div>
+          </div>
+          <p className="text-xs text-slate-500 mb-5">Every model you try is logged here with its estimated cost. Tap the heart to mark the ones you love. Estimates use provider rates (USD / 1M tokens) — local Ollama models are free.</p>
+
+          {ledger.length === 0 ? (
+            <p className="text-sm text-slate-600 italic text-center py-6">No models tried yet. Pick a model and send a message — it'll show up here with its running cost.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-[10px] text-slate-500 uppercase tracking-wider border-b border-slate-700">
+                    <th className="text-left font-bold py-2 pr-2">Love</th>
+                    <th className="text-left font-bold py-2 pr-2">Model</th>
+                    <th className="text-right font-bold py-2 px-2">Calls</th>
+                    <th className="text-right font-bold py-2 px-2">Tokens</th>
+                    <th className="text-right font-bold py-2 px-2">Rate (in/out)</th>
+                    <th className="text-right font-bold py-2 px-2">Last Used</th>
+                    <th className="text-right font-bold py-2 pl-2">Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ledger.map((m) => (
+                    <tr key={m.model} className={`border-b border-slate-700/40 hover:bg-slate-900/40 transition-colors ${m.favorite ? 'bg-rose-500/[0.04]' : ''}`}>
+                      <td className="py-2.5 pr-2">
+                        <button onClick={() => toggleFavorite(m.model)} title={m.favorite ? 'Unfavorite' : 'Mark as loved'}
+                          className={`transition-colors ${m.favorite ? 'text-rose-400' : 'text-slate-600 hover:text-rose-400'}`}>
+                          <Heart className="w-4 h-4" fill={m.favorite ? 'currentColor' : 'none'} />
+                        </button>
+                      </td>
+                      <td className="py-2.5 pr-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-slate-200">{m.model.split('/').pop()}</span>
+                          {m.is_local
+                            ? <span className="text-[8px] font-black px-1.5 py-0.5 rounded bg-green-500/15 text-green-400 border border-green-500/30">FREE</span>
+                            : m.favorite && <Sparkles className="w-3 h-3 text-rose-400/70" />}
+                        </div>
+                        <span className="text-[10px] text-slate-600">{m.model.split('/')[0]}</span>
+                      </td>
+                      <td className="py-2.5 px-2 text-right font-mono text-slate-300">{m.calls}</td>
+                      <td className="py-2.5 px-2 text-right font-mono text-slate-400">{m.tokens.toLocaleString()}</td>
+                      <td className="py-2.5 px-2 text-right font-mono text-[11px] text-slate-500">{m.is_local ? '—' : `$${m.price_in}/$${m.price_out}`}</td>
+                      <td className="py-2.5 px-2 text-right text-[11px] text-slate-500">{m.last_used ? new Date(m.last_used).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}</td>
+                      <td className="py-2.5 pl-2 text-right font-mono font-bold text-oldgold-400">${m.cost.toFixed(4)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
 
         {/* Top stat row */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">

@@ -24,7 +24,7 @@ export type UniformKey =
   | 'gala' | 'mechanic' | 'executive' | 'vocalist'
   | 'doctor' | 'artist' | 'courier' | 'athlete'
   | 'librarian' | 'scout' | 'archivist' | 'conductor'
-  | 'stylist';
+  | 'stylist' | 'police';
 
 export interface DollData {
   name: string;
@@ -66,6 +66,7 @@ export const UNIFORMS: Record<UniformKey, {
   archivist: { dress: '#4a1d6e', accent: '#c084fc', skin: '#8d5524', hair: '#2a1808', label: 'Archive',    icon: '🧠', crown: 'none'    },
   conductor: { dress: '#2d1b00', accent: '#fbbf24', skin: '#6b4226', hair: '#0a0604', label: 'Baton',      icon: '🎯', crown: 'beret'   },
   stylist:   { dress: '#6b1a3a', accent: '#e8a4b8', skin: '#9a6b4b', hair: '#3d1a0e', label: 'Studio',     icon: '✂️', crown: 'none'    },
+  police:    { dress: '#11223a', accent: '#38bdf8', skin: '#6b4226', hair: '#0a0604', label: 'Patrol',     icon: '🛡️', crown: 'cap'     },
 };
 
 // ── Role-appropriate model registry ─────────────────────────────────────────
@@ -134,6 +135,13 @@ const ROLE_MODELS: Record<string, ModelEntry[]> = {
   'Flow Router':  [
     { id: 'logic',                            label: 'Logic Router',         type: 'engine' },
     { id: 'MiniMaxAI/MiniMax-M3',            label: 'AI Router (M3)',        type: 'hf'     },
+  ],
+  'AI Security': [
+    { id: 'meta-llama/Llama-Guard-3-8B',                  label: 'Llama Guard 3 8B',             type: 'hf'     },
+    { id: 'MiniMaxAI/MiniMax-M3',                         label: 'MiniMax M3 (audit)',           type: 'hf'     },
+    { id: 'ibm-granite/granite-guardian-3.0-8b',          label: 'Granite Guardian 3',           type: 'hf'     },
+    { id: 'ollama/llama-guard3',                          label: 'Llama Guard 3 (local)',        type: 'ollama' },
+    { id: 'protectai/deberta-v3-base-prompt-injection-v2', label: 'Prompt-Injection Detector',   type: 'hf'     },
   ],
   'Text-to-Image': [
     { id: 'black-forest-labs/FLUX.1-dev',                 label: 'FLUX.1 Dev (max realism)',    type: 'hf'     },
