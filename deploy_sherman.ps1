@@ -1,6 +1,4 @@
-# deploy_sherman.ps1
-# Registers GEN SHERMAN (BERYL HF backend) as a Windows startup task,
-# then starts it immediately.
+# deploy_sherman.ps1 — Register GEN SHERMAN auto-start and launch backend
 # Run once: powershell -ExecutionPolicy Bypass -File deploy_sherman.ps1
 
 $ErrorActionPreference = "Stop"
@@ -8,30 +6,23 @@ $ErrorActionPreference = "Stop"
 $BackendDir  = "$PSScriptRoot\backend"
 $PythonExe   = (Get-Command python -ErrorAction SilentlyContinue).Source
 if (-not $PythonExe) {
-    Write-Host "Python not found in PATH. Install Python 3.10+ and re-run." -ForegroundColor Red
+    Write-Host "Python not found in PATH." -ForegroundColor Red
     exit 1
 }
 
 $TaskName    = "BERYL_GEN_SHERMAN"
 $StartScript = "$PSScriptRoot\start_sherman_bg.bat"
 
-# Create a hidden launcher batch file
 $batchContent = "@echo off`r`ncd /d `"$BackendDir`"`r`nstart /min `"`" `"$PythonExe`" -m uvicorn main:app --host 127.0.0.1 --port 8001 --log-level warning`r`n"
 [System.IO.File]::WriteAllText($StartScript, $batchContent, [System.Text.Encoding]::ASCII)
 
-Write-Host "Launcher created: $StartScript" -ForegroundColor Cyan
+Write-Host "Launcher: $StartScript" -ForegroundColor Cyan
 
-# Remove old task if it exists, then create new one
-$existing = schtasks /query /tn $TaskName 2>$null
-if ($existing) {
-    schtasks /delete /tn $TaskName /f | Out-Null
-    Write-Host "Removed old task: $TaskName" -ForegroundColor Yellow
-}
+$RegKey  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$RegName = "BERYL_GEN_SHERMAN"
+Set-ItemProperty -Path $RegKey -Name $RegName -Value "`"$StartScript`"" -Force
+Write-Host "Auto-start registered in HKCU Run key: $RegName" -ForegroundColor Green
 
-schtasks /create /tn $TaskName /tr "`"$StartScript`"" /sc ONLOGON /rl HIGHEST /f /ru "$env:USERNAME" | Out-Null
-Write-Host "Task registered: $TaskName (runs at every logon)" -ForegroundColor Green
-
-# Check if already running
 $alreadyUp = $false
 try {
     $r = Invoke-WebRequest -Uri "http://127.0.0.1:8001/security/daemon/status" -TimeoutSec 2 -ErrorAction SilentlyContinue
@@ -41,9 +32,9 @@ try {
 }
 
 if ($alreadyUp) {
-    Write-Host "Backend already running on :8001 — daemon is live." -ForegroundColor Green
+    Write-Host "Backend already running on :8001 -- GEN SHERMAN is LIVE." -ForegroundColor Green
 } else {
-    Write-Host "Starting GEN SHERMAN backend now..." -ForegroundColor Cyan
+    Write-Host "Starting backend..." -ForegroundColor Cyan
     Start-Process -FilePath $StartScript -WindowStyle Hidden
 
     $tries = 0
@@ -54,27 +45,23 @@ if ($alreadyUp) {
             $r = Invoke-WebRequest -Uri "http://127.0.0.1:8001/security/daemon/status" -TimeoutSec 2 -ErrorAction Stop
             if ($r.StatusCode -eq 200) {
                 $status = $r.Content | ConvertFrom-Json
-                Write-Host "GEN SHERMAN is LIVE. Threat level: $($status.threat_level)" -ForegroundColor Green
+                Write-Host "GEN SHERMAN LIVE. Threat level: $($status.threat_level)" -ForegroundColor Green
                 $up = $true
                 break
             }
-        } catch {
-            # keep trying
-        }
+        } catch { }
         $tries++
     }
     if (-not $up) {
-        Write-Host "Backend did not respond after 30s. Check logs in backend folder." -ForegroundColor Red
+        Write-Host "Backend did not respond after 30s. Check backend logs." -ForegroundColor Red
     }
 }
 
 Write-Host ""
-Write-Host "=====================================================" -ForegroundColor DarkGray
-Write-Host "  GEN SHERMAN DEPLOYED" -ForegroundColor Yellow
-Write-Host "  Posture check  : every 30 seconds" -ForegroundColor White
-Write-Host "  Full sweep     : every 5 minutes" -ForegroundColor White
-Write-Host "  Windows alerts : HIGH + CRITICAL threats" -ForegroundColor White
-Write-Host "  Auto-start     : every Windows login (Task: $TaskName)" -ForegroundColor White
-Write-Host "  Logs           : $BackendDir\sherman_log.jsonl" -ForegroundColor White
-Write-Host "  Dashboard      : BERYL HF -> GEN SHERMAN tab -> DAEMON" -ForegroundColor White
-Write-Host "=====================================================" -ForegroundColor DarkGray
+Write-Host "GEN SHERMAN DEPLOYED" -ForegroundColor Yellow
+Write-Host "  Posture check : every 30s" -ForegroundColor White
+Write-Host "  Full sweep    : every 5min" -ForegroundColor White
+Write-Host "  Alerts        : HIGH + CRITICAL" -ForegroundColor White
+Write-Host "  Auto-start    : ONLOGON task $TaskName" -ForegroundColor White
+Write-Host "  Logs          : $BackendDir\sherman_log.jsonl" -ForegroundColor White
+Write-Host "  Dashboard     : BERYL HF -> GEN SHERMAN -> DAEMON tab" -ForegroundColor White

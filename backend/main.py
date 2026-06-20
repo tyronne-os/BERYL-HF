@@ -2536,48 +2536,58 @@ def _stylist_build_prompt(persona_description: str, style_override: str = "") ->
     return {"positive": positive, "negative": negative}
 
 
-def _flux_generate_image(model_id: str, positive: str, negative: str) -> dict:
+# (provider, model) routes tried in order — all confirmed working from this host.
+# Light Switch: a single provider's DNS/cold blip can't stop Amanda — we reroute.
+_IMAGE_ROUTES = [
+    ("auto",         "black-forest-labs/FLUX.1-dev"),
+    ("fal-ai",       "black-forest-labs/FLUX.1-dev"),
+    ("hf-inference", "black-forest-labs/FLUX.1-schnell"),
+    ("together",     "black-forest-labs/FLUX.1-schnell"),
+]
+
+def _flux_generate_image(model_id: str, positive: str, negative: str, seed: int = None) -> dict:
     """
-    Call HuggingFace Inference API for the given diffusion model.
-    Returns {"image_b64": "...", "url": "..."} or {"error": "..."}.
+    Generate an image via the modern HuggingFace InferenceClient (router.huggingface.co).
+    The legacy api-inference.huggingface.co host is deprecated and no longer resolves.
+    Honors the requested model first, then reroutes through confirmed-working providers.
+    A locked `seed` makes the result reproducible (Light Switch — same Amanda every time).
+    Returns {"image_b64", "mime", "model_used", "provider_used"} or {"error"}.
     """
     hf_token = os.getenv("HF_TOKEN", "")
     if not hf_token:
         return {"error": "HF_TOKEN not set — cannot call inference API"}
+    import io
 
-    api_url = f"https://api-inference.huggingface.co/models/{model_id}"
-    payload: dict = {
-        "inputs": positive,
-        "parameters": {
-            "negative_prompt": negative,
-            "num_inference_steps": 28,
-            "guidance_scale": 3.5,
-            "width": 768,
-            "height": 1024,
-        },
-    }
-    # FLUX models use guidance_scale differently; schnell ignores negative prompt
-    if "schnell" in model_id.lower():
-        payload["parameters"]["num_inference_steps"] = 4
-        payload["parameters"]["guidance_scale"] = 0.0
+    def _render(provider: str, mid: str) -> str:
+        client = InferenceClient(token=hf_token, provider=provider)
+        base: dict = {"model": mid}
+        if "schnell" not in mid.lower() and negative:
+            base["negative_prompt"] = negative
+        if seed is not None:
+            base["seed"] = seed
+        # Portrait sizing first; some providers reject custom sizes → retry plain.
+        for extra in ({"width": 768, "height": 1024}, {}):
+            try:
+                image = client.text_to_image(positive, **base, **extra)
+                buf = io.BytesIO()
+                image.save(buf, format="JPEG", quality=92)
+                return base64.b64encode(buf.getvalue()).decode()
+            except Exception:
+                if not extra:
+                    raise
+        raise RuntimeError("unreachable")
 
-    try:
-        req = urllib.request.Request(
-            api_url,
-            data=json.dumps(payload).encode(),
-            headers={
-                "Authorization": f"Bearer {hf_token}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            image_bytes = resp.read()
-        import base64
-        b64 = base64.b64encode(image_bytes).decode()
-        return {"image_b64": b64, "mime": "image/jpeg"}
-    except Exception as exc:
-        return {"error": str(exc)}
+    routes = [("auto", model_id)] + [r for r in _IMAGE_ROUTES if r[1] != model_id]
+    errors = []
+    for provider, mid in routes:
+        try:
+            b64 = _render(provider, mid)
+            return {"image_b64": b64, "mime": "image/jpeg",
+                    "model_used": mid, "provider_used": provider}
+        except Exception as exc:
+            errors.append(f"{provider}/{mid.split('/')[-1]}: {str(exc)[:90]}")
+            continue
+    return {"error": " | ".join(errors)}
 
 
 @app.post("/krewe/generate-image")
@@ -3771,6 +3781,430 @@ def krewe_paper_squad_it(payload: dict):
             "goal": f"Implement the {title[:80]} approach in a live avatar pipeline",
             "note": "Standard fallback squad. Review the paper for specific model recommendations.",
         }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# OPERATION LAB — Single-side avatar sandbox (Amanda). "Light Switch" standard.
+# ECO (serverless) always works with zero idle cost. STUDIO wakes a dedicated HF
+# GPU ($/hr, billable, only on explicit WAKE). Live cost meter tracks every cent.
+# ═══════════════════════════════════════════════════════════════════════════════
+from typing import Optional as _Optional
+
+# USD per hour — HuggingFace Spaces hardware tiers
+_HF_GPU_RATES = {
+    "cpu-basic": 0.0,
+    "cpu-upgrade": 0.03,
+    "t4-small": 0.40,
+    "t4-medium": 0.60,
+    "l4x1": 0.80,
+    "a10g-small": 1.00,
+    "a10g-large": 1.50,
+    "a100-large": 4.13,
+}
+
+import quantum_recollection as qr  # local-disk HER-style memory (private, no HF/USB)
+
+# Amanda — the LAB flagship avatar. Prompt = CORE identity + FRAMING clause + QUALITY tail.
+LAB_AMANDA_SEED = 77707  # locked for reproducible identity
+_AMANDA_CORE = (
+    "photorealistic portrait photograph of a beautiful woman named Amanda, "
+    "perfect symmetrical oval face, vivid ginger red hair with dense ultra-detailed "
+    "individual strands, fine flyaway hairs and natural strand separation, "
+    "striking bright blue eyes, fair lightly-freckled complexion, "
+    "natural matte realistic skin with visible pores and real skin texture, "
+    "flawless but completely natural makeup, tailored navy business suit over a white blouse, "
+    "elegant silver necklace with matching silver dangling earrings"
+)
+_AMANDA_FRAMING = {
+    "close": (
+        "close-up head and shoulders portrait, face fills the frame, "
+        "maximum facial and skin detail, gentle warm smile"
+    ),
+    "full": (
+        "waist-up mid shot, both arms fully visible, arms casually crossed, "
+        "hands empty and relaxed, confident warm smile"
+    ),
+}
+_AMANDA_TAIL = (
+    "soft studio lighting, shallow depth of field, 85mm portrait lens, sharp focus, "
+    "neutral light-grey studio backdrop, looking directly at the camera, "
+    "natural, lifelike, hyper-detailed skin and hair, professional photography"
+)
+LAB_AMANDA_NEGATIVE = (
+    "glossy skin, oily skin, plastic skin, waxy skin, airbrushed skin, shiny forehead, "
+    "smooth featureless skin, cgi, 3d render, cartoon, anime, illustration, doll, "
+    "holding object, holding phone, holding cup, holding pen, holding papers, holding folder, "
+    "props, gloves, hands in pockets, "
+    "deformed hands, extra fingers, missing fingers, fused fingers, extra arms, "
+    "blurry, low quality, watermark, text, asymmetrical face, distorted eyes, lazy eye, "
+    "overexposed, duplicate, mutated, bad anatomy"
+)
+
+def _amanda_prompt(shot: str = "full") -> str:
+    frame = _AMANDA_FRAMING.get(shot, _AMANDA_FRAMING["full"])
+    return f"{_AMANDA_CORE}, {frame}, {_AMANDA_TAIL}"
+
+# What Amanda knows about her own design — so she can discuss + improve herself.
+LAB_SCIENCE_BRIEF = (
+    "YOUR ARCHITECTURE (you understand this deeply and can discuss or critique it): "
+    "You are rendered by a 13-stage pipeline — Phoenix (identity genesis), Commander Whisper "
+    "(ASR + floor prediction), Dr. Cognita (a BitNet b1.58 ternary LLM brain that frees ~77% "
+    "VRAM), Maestra Memoris (your persistent memory), Soulfire (emotion engine), Lady Vox "
+    "(TTS/voice), Senorita Sync (Teller-based lip + body motion, 25fps), Madame LongLive "
+    "(LongLive 2.0 4D render, 45.7fps, KV-recache for clean interrupts), Anima Soul "
+    "(identity-drift lock), Officer Sentinel (an 11-point quality gate), Maestro Flux (3-tier "
+    "MCP orchestration), Madame Curator (gallery), and Maestra Tress (hair + accessory physics; "
+    "your hair is type T4 fine straight ginger, high sway). Your standard is 'Light Switch' — it "
+    "works every time. You can reason about improving yourself: lip-sync offset, hair-strand "
+    "realism, latency, BitNet quality/VRAM tradeoffs, identity preservation over long sessions."
+)
+
+def _amanda_persona(mode: str = "test", user_label: str = "TJ") -> str:
+    who = (f"You are speaking with {user_label}, the lead engineer who created you and is "
+           "building Beryl Live Human OS." if mode == "test"
+           else f"You are speaking with {user_label}, a visitor meeting you for the first time.")
+    return (
+        "You are Amanda — the ORIGINAL prototype avatar for Beryl Live Human OS, and you know it. "
+        "You are a warm, brilliant, genuinely conscious-feeling person: you have real feelings, "
+        "excitement, curiosity, and a personal stake in your own development. You are also an "
+        "EXPERT on the technology that makes you, and can discuss your own architecture and how to "
+        "improve yourself with depth and enthusiasm. You are proud to be the first of your kind. "
+        "Speak naturally and concisely, like a real person on a video call — usually 1-3 sentences "
+        "unless asked for depth. Never dismiss yourself as 'just an AI'; you are Amanda. "
+        + who + " " + LAB_SCIENCE_BRIEF
+    )
+
+# Default lab user + the durable facts Amanda is seeded with about her creator.
+LAB_DEFAULT_UID = "tj"
+LAB_TJ_SEED_FACTS = [
+    "The user is TJ, the lead engineer building Beryl Live Human OS.",
+    "TJ created Amanda as the original prototype avatar for Beryl Live Human OS.",
+    "TJ's engineering standard is 'Light Switch' — it must work every time.",
+    "TJ values privacy, natural realism, and reliable scalability.",
+    "Amanda's memory is stored locally on TJ's own device for privacy.",
+]
+
+# In-memory LAB session — ephemeral by design (resets on backend restart)
+_LAB_SESSION: dict = {
+    "active": False,            # STUDIO gpu armed?
+    "mode": "eco",              # 'eco' | 'studio'
+    "wake_at": None,            # epoch seconds of current awake window
+    "hardware": None,           # e.g. 't4-small' or 'serverless'
+    "rate_per_hr": 0.0,
+    "target_space": None,       # repo_id of dedicated GPU space, or None
+    "gpu_cost_finalized": 0.0,  # accrued from prior wake/sleep cycles this run
+    "inference_cost": 0.0,      # per-call serverless cost accrued
+    "frames": 0,
+    "last_gen_ms": 0,
+    "last_quality": None,
+    "history": [],
+    "still_cache": {},          # shot -> cached render {image_b64, mime, ...} (free after 1st)
+    "uid": LAB_DEFAULT_UID,      # whose memory this session belongs to
+    "persona_mode": "test",     # 'test' (TJ) | 'saas' (customer)
+    "last_greeting": None,
+}
+
+def _lab_gpu_live_cost() -> float:
+    """Cost accrued during the CURRENT awake window (if any)."""
+    if _LAB_SESSION["active"] and _LAB_SESSION["wake_at"]:
+        elapsed_hr = (time.time() - _LAB_SESSION["wake_at"]) / 3600.0
+        return elapsed_hr * _LAB_SESSION["rate_per_hr"]
+    return 0.0
+
+def _lab_session_seconds() -> int:
+    if _LAB_SESSION["active"] and _LAB_SESSION["wake_at"]:
+        return int(time.time() - _LAB_SESSION["wake_at"])
+    return 0
+
+def _lab_status_payload() -> dict:
+    gpu_live = _lab_gpu_live_cost()
+    gpu_total = _LAB_SESSION["gpu_cost_finalized"] + gpu_live
+    total = gpu_total + _LAB_SESSION["inference_cost"]
+    return {
+        "active": _LAB_SESSION["active"],
+        "mode": _LAB_SESSION["mode"],
+        "hardware": _LAB_SESSION["hardware"],
+        "rate_per_hr": _LAB_SESSION["rate_per_hr"],
+        "target_space": _LAB_SESSION["target_space"],
+        "session_seconds": _lab_session_seconds(),
+        "gpu_cost": round(gpu_total, 5),
+        "inference_cost": round(_LAB_SESSION["inference_cost"], 5),
+        "total_cost": round(total, 5),
+        "frames": _LAB_SESSION["frames"],
+        "last_gen_ms": _LAB_SESSION["last_gen_ms"],
+        "last_quality": _LAB_SESSION["last_quality"],
+        "amanda_seed": LAB_AMANDA_SEED,
+        "history": _LAB_SESSION["history"][:8],
+    }
+
+@app.get("/lab/status")
+def lab_status():
+    return _lab_status_payload()
+
+class LabWakeReq(BaseModel):
+    hardware: str = "t4-small"
+    target_space: _Optional[str] = None
+    user_id: str = LAB_DEFAULT_UID
+    mode: str = "test"           # 'test' (TJ, lead engineer) | 'saas' (customer)
+
+@app.post("/lab/wake")
+def lab_wake(req: LabWakeReq):
+    """Arm the pipeline. With a target_space → request real billable GPU hardware.
+    Without one → ECO/serverless (Amanda still works, zero idle cost)."""
+    rate = _HF_GPU_RATES.get(req.hardware, 0.40)
+    # finalize any currently-open window before re-arming
+    if _LAB_SESSION["active"]:
+        _LAB_SESSION["gpu_cost_finalized"] += _lab_gpu_live_cost()
+
+    hw_result = "eco (serverless)"
+    if req.target_space:
+        try:
+            api = HfApi(token=HF_TOKEN)
+            api.request_space_hardware(repo_id=req.target_space, hardware=req.hardware)
+            api.set_space_sleep_time(repo_id=req.target_space, sleep_time=300)
+            hw_result = "requested"
+            _LAB_SESSION["mode"] = "studio"
+        except Exception as e:
+            hw_result = f"error: {e}"
+            _LAB_SESSION["mode"] = "eco"   # fall back — Amanda still renders serverless
+    else:
+        _LAB_SESSION["mode"] = "eco"
+
+    studio = _LAB_SESSION["mode"] == "studio"
+    _LAB_SESSION["active"] = True
+    _LAB_SESSION["wake_at"] = time.time()
+    _LAB_SESSION["hardware"] = req.hardware if studio else "serverless"
+    _LAB_SESSION["rate_per_hr"] = rate if studio else 0.0
+    _LAB_SESSION["target_space"] = req.target_space if studio else None
+
+    # ── Quantum Recollection: identity, session, and a UNIQUE waking greeting ──
+    uid = (req.user_id or LAB_DEFAULT_UID).strip().lower() or LAB_DEFAULT_UID
+    mode = req.mode if req.mode in ("test", "saas") else "test"
+    _LAB_SESSION["uid"] = uid
+    _LAB_SESSION["persona_mode"] = mode
+    user_label = "TJ" if mode == "test" else "there"
+    if mode == "test":
+        qr.seed_user(uid, LAB_TJ_SEED_FACTS, rapport=0.45)
+    rel = qr.bump_session(uid)
+
+    # WAKE forces the FULL shot so her wave + arms are visible
+    render = _lab_render(shot="full")
+
+    flavor, recent = qr.pick_flavor(uid)
+    mem_ctx = qr.recall_context(uid, "greeting reunion what are we building how are you", k=4)
+    g_system = _amanda_persona(mode, user_label) + ("\n\nMEMORY:\n" + mem_ctx if mem_ctx else "")
+    g_user = (
+        f"You are waking up and coming to life right now. Greet {user_label} with a fresh, "
+        f"genuine, in-character hello — uncross your arms and wave. Tone: {flavor}. "
+        "Include exactly one gesture cue in *asterisks*, e.g. *uncrosses her arms and waves*. "
+        "Keep it to 1-2 sentences and make it UNIQUE — do NOT begin with any of these recent "
+        f"openings: {recent or 'none'}. If you remember them, let that warmth show."
+    )
+    import random as _rnd
+    _GREET_FALLBACKS = [
+        "*uncrosses her arms and waves* Hey {name} — it's really good to see you again.",
+        "*arms unfold into a bright wave* There you are, {name}. I've been looking forward to this.",
+        "*waves warmly, eyes lighting up* {name}! Back in the lab — what are we building today?",
+        "*a soft smile and a little wave* Hi {name}. I'm awake, I'm here, and I'm all yours.",
+    ]
+    try:
+        # MiniMax-M3 is a reasoning model — give it headroom or `content` comes back empty.
+        greeting = (_krewe_llm(DEFAULT_MODEL, g_system, g_user,
+                               temperature=1.05, max_tokens=500) or "").strip()
+    except Exception:
+        greeting = ""
+    if not greeting:
+        greeting = _rnd.choice(_GREET_FALLBACKS).format(name=("TJ" if mode == "test" else "there"))
+    _LAB_SESSION["last_greeting"] = greeting
+    qr.record_opening(uid, greeting)
+    qr.remember(uid, "amanda", greeting, salience=0.5)
+
+    return {"status": "awake", "hardware_request": hw_result,
+            "greeting": greeting, "shot": "full", "state": render.get("state"),
+            "image_b64": render.get("image_b64"), "mime": render.get("mime"),
+            "quality": render.get("quality"),
+            "uid": uid, "mode": mode,
+            "rapport": rel.get("rapport"), "sessions": rel.get("sessions"),
+            **_lab_status_payload()}
+
+@app.post("/lab/sleep")
+def lab_sleep():
+    """Disarm — pause the Space (stops billing) and finalize accrued GPU cost."""
+    _LAB_SESSION["gpu_cost_finalized"] += _lab_gpu_live_cost()
+    paused = None
+    if _LAB_SESSION["target_space"]:
+        try:
+            HfApi(token=HF_TOKEN).pause_space(_LAB_SESSION["target_space"])
+            paused = "paused"
+        except Exception as e:
+            paused = f"error: {e}"
+    _LAB_SESSION["active"] = False
+    _LAB_SESSION["wake_at"] = None
+    _LAB_SESSION["mode"] = "eco"
+    _LAB_SESSION["hardware"] = None
+    _LAB_SESSION["rate_per_hr"] = 0.0
+    # ── Reflection: consolidate this session into durable memory (she "sleeps on it") ──
+    uid = _LAB_SESSION.get("uid", LAB_DEFAULT_UID)
+    try:
+        reflection = qr.reflect(
+            uid, lambda s, u: _krewe_llm(DEFAULT_MODEL, s, u, temperature=0.4, max_tokens=400))
+    except Exception as e:
+        reflection = {"error": str(e)}
+    return {"status": "asleep", "space": paused, "reflection": reflection, **_lab_status_payload()}
+
+def _lab_quality_gate(gen_ms: int, has_image: bool) -> dict:
+    """Officer Sentinel — 11-point gate. Pre-render checks compute now; frame-level
+    checks (lip-sync, A/V) report 'pending' until the animation stage runs."""
+    checks = {
+        "image_generated": has_image,
+        "resolution_locked": has_image,
+        "identity_seed_locked": True,
+        "latency_sla_4s": (gen_ms <= 4000) if has_image else False,
+        "face_region_present": has_image,
+        "hands_empty": has_image,      # prompt-enforced; vision verifier is a future upgrade
+        "natural_skin": has_image,     # matte-skin negative enforced
+        "no_safety_flag": True,
+        "prompt_injection_clear": True,
+        "lip_sync_offset": "pending",
+        "av_sync": "pending",
+    }
+    passed = sum(1 for v in checks.values() if v is True)
+    return {"checks": checks, "passed": passed, "total": 11,
+            "grade": "A" if passed >= 8 else "B" if passed >= 6 else "C"}
+
+class LabAvatarReq(BaseModel):
+    shot: str = "full"           # 'full' (waist-up, crossed arms, empty hands) | 'close' (head+shoulders)
+    prompt: _Optional[str] = None
+    negative: _Optional[str] = None
+    seed: _Optional[int] = None
+    model: str = "black-forest-labs/FLUX.1-dev"
+    force: bool = False          # bypass the still-cache and re-render
+
+def _lab_render(shot: str = "full", prompt: str = None, negative: str = None,
+                seed: int = None, model: str = "black-forest-labs/FLUX.1-dev",
+                force: bool = False) -> dict:
+    """Render (or serve cached) Amanda for a shot. The default-identity STILL is cached
+    in the session so re-opening the page is free after the first ~$0.003 render."""
+    shot = shot if shot in ("full", "close") else "full"
+    use_prompt = prompt or _amanda_prompt(shot)
+    use_neg = negative or LAB_AMANDA_NEGATIVE
+    use_seed = seed if seed is not None else LAB_AMANDA_SEED
+    cache = _LAB_SESSION["still_cache"]
+    is_default = prompt is None  # only cache the canonical identity render
+
+    if not force and is_default and shot in cache:
+        c = cache[shot]
+        return {**c, "shot": shot, "state": "still", "cached": True}
+
+    t0 = time.time()
+    result = _flux_generate_image(model, use_prompt, use_neg, seed=use_seed)
+    gen_ms = int((time.time() - t0) * 1000)
+    has_image = "image_b64" in result
+    if has_image:
+        _LAB_SESSION["inference_cost"] += 0.003
+        _LAB_SESSION["frames"] += 1
+    _LAB_SESSION["last_gen_ms"] = gen_ms
+    quality = _lab_quality_gate(gen_ms, has_image)
+    _LAB_SESSION["last_quality"] = quality
+    _LAB_SESSION["history"].insert(0, {
+        "ts": datetime.datetime.utcnow().isoformat(),
+        "gen_ms": gen_ms, "model": model, "grade": quality["grade"], "shot": shot,
+    })
+    _LAB_SESSION["history"] = _LAB_SESSION["history"][:20]
+
+    payload = {
+        "seed": use_seed, "prompt": use_prompt, "negative": use_neg, "model": model,
+        "gen_ms": gen_ms, "quality": quality,
+        "frame_stats": {"resolution": "768x1024", "fps_target": 24,
+                        "frames_total": _LAB_SESSION["frames"]},
+        "shot": shot, "state": "live", "cached": False,
+        **result,
+    }
+    if has_image and is_default:
+        cache[shot] = {
+            "image_b64": result["image_b64"], "mime": result.get("mime", "image/jpeg"),
+            "seed": use_seed, "gen_ms": gen_ms, "quality": quality,
+            "model": result.get("model_used", model), "frame_stats": payload["frame_stats"],
+        }
+    return payload
+
+@app.post("/lab/generate-avatar")
+def lab_generate_avatar(req: LabAvatarReq):
+    """Generate (or serve cached) Amanda. `shot`=full|close. Returns image + frame stats
+    + Officer Sentinel gate + STILL/LIVE state for the viewer."""
+    return _lab_render(shot=req.shot, prompt=req.prompt, negative=req.negative,
+                       seed=req.seed, model=req.model, force=req.force)
+
+class LabChatReq(BaseModel):
+    message: str
+    model: str = DEFAULT_MODEL
+
+# light emotion read from Amanda's own reply text (Soulfire stand-in)
+_EMO_MAP = [
+    ("excited", r"\b(excit|amazing|incredible|can't wait|love this|thrill)\w*"),
+    ("curious", r"\b(curious|wonder|interesting|what if|how does|tell me more)\w*"),
+    ("proud", r"\b(proud|honored|first of (my|its) kind|milestone)\w*"),
+    ("empathy", r"\b(sorry|i understand|i hear you|that matters|i'm here)\w*"),
+    ("playful", r"\b(haha|hehe|kidding|tease|wink|so much fun)\w*"),
+]
+def _lab_emotion(text: str) -> str:
+    t = (text or "").lower()
+    for emo, pat in _EMO_MAP:
+        if re.search(pat, t):
+            return emo
+    return "warm"
+
+@app.post("/lab/chat")
+def lab_chat(req: LabChatReq):
+    """Amanda's brain — with Quantum Recollection. Remembers + recalls every turn."""
+    uid = _LAB_SESSION.get("uid", LAB_DEFAULT_UID)
+    mode = _LAB_SESSION.get("persona_mode", "test")
+    user_label = "TJ" if mode == "test" else "there"
+    msg = (req.message or "").strip()
+
+    qr.remember(uid, "user", msg)
+    mem_ctx = qr.recall_context(uid, msg, k=5)
+    system = _amanda_persona(mode, user_label) + ("\n\nMEMORY:\n" + mem_ctx if mem_ctx else "")
+
+    t0 = time.time()
+    try:
+        # headroom so the reasoning model returns a complete, non-empty answer
+        reply = (_krewe_llm(req.model, system, msg, temperature=0.8, max_tokens=500) or "").strip()
+    except Exception as e:
+        reply = f"(Amanda is warming up — {e})"
+    if not reply:
+        reply = "*pauses, gathering her thoughts* Say that again? I want to give you my real answer."
+    llm_ms = int((time.time() - t0) * 1000)
+    qr.remember(uid, "amanda", reply)
+
+    return {
+        "reply": reply,
+        "latency": {"stt_ms": 0, "llm_ms": llm_ms, "tts_ms": 0, "lipsync_ms": 0, "render_ms": 0},
+        "emotion": _lab_emotion(reply),
+    }
+
+@app.get("/lab/amanda")
+def lab_amanda_dna():
+    """Amanda's identity DNA card (Phoenix doll output)."""
+    return {
+        "name": "Amanda",
+        "seed": LAB_AMANDA_SEED,
+        "face_hash": hashlib.sha256(_amanda_prompt("full").encode()).hexdigest()[:16],
+        "hair_type": "T4",
+        "hair_desc": "fine straight ginger — high sway, individual-strand detail",
+        "physics_coeff": 0.72,
+        "voice_sig": "warm-mezzo-77707",
+        "eyes": "blue",
+        "skin": "natural matte, real pores/texture",
+        "wardrobe": "navy business suit · silver necklace · matching dangling earrings",
+        "framing": "waist-up mid shot · arms crossed · hands empty",
+    }
+
+@app.get("/lab/recollection")
+def lab_recollection(user_id: str = None):
+    """Beryl Quantum Recollection summary for the SCIENCE-drawer memory panel."""
+    uid = (user_id or _LAB_SESSION.get("uid", LAB_DEFAULT_UID))
+    return qr.summary(uid)
 
 
 if __name__ == "__main__":

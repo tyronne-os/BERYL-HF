@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Image as ImageIcon, Flame, Shield, Users, DollarSign } from 'lucide-react';
+import { Image as ImageIcon, Flame, Shield, Users, DollarSign, FlaskConical } from 'lucide-react';
 import { API } from '../api';
 
 interface BottomNavProps {
@@ -62,6 +62,26 @@ const BottomNav: React.FC<BottomNavProps> = ({ currentPage, setCurrentPage, sele
     <footer className="shrink-0 relative flex items-center justify-center py-2.5 bg-midnight-900 border-t border-midnight-800 z-40">
       {selectedModel && <CurrentModelCost model={selectedModel} />}
       <nav className="flex items-center bg-midnight-950/90 backdrop-blur-xl rounded-full p-1.5 border border-oldgold-500/30 shadow-[0_0_30px_rgba(212,175,55,0.15)]">
+        <button
+          onClick={() => setCurrentPage('lab')}
+          className={`nav-flash px-6 py-2.5 rounded-full text-[11px] font-bold transition-all flex items-center space-x-2 ${
+            currentPage === 'lab'
+              ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-[0_0_20px_rgba(34,211,238,0.5)]'
+              : 'text-slate-400 hover:text-cyan-400 hover:bg-midnight-800'
+          }`}
+        >
+          <FlaskConical className="w-4 h-4" />
+          <span>LAB</span>
+          {currentPage !== 'lab' && (
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-cyan-500" />
+            </span>
+          )}
+        </button>
+
+        <div className="w-px h-6 bg-midnight-800 mx-2" />
+
         <button
           onClick={() => setCurrentPage('krewe')}
           className={`nav-flash px-6 py-2.5 rounded-full text-[11px] font-bold transition-all flex items-center space-x-2 ${

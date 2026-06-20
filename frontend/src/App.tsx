@@ -29,6 +29,7 @@ import ComfyUIMirror from './components/ComfyUIMirror';
 import FlipMode from './components/FlipMode';
 import GenSherman from './components/GenSherman';
 import KrewePage from './components/krewe/KrewePage';
+import LabPage from './components/LabPage';
 import BottomNav from './components/BottomNav';
 import PaperBanner from './components/krewe/PaperBanner';
 import PaperOverlay from './components/krewe/PaperOverlay';
@@ -44,7 +45,7 @@ const App: React.FC = () => {
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [isFileMenuOpen, setIsFileMenuOpen] = useState(false);
   const [isVoiceOpen, setIsVoiceOpen] = useState(false);
-  const [currentPage, setCurrentPage] = useState<'chat' | 'hf' | 'gpu' | 'studio' | 'cli' | 'docs' | 'ollama' | 'comfy' | 'fliip' | 'sherman' | 'krewe' | 'research'>('chat');
+  const [currentPage, setCurrentPage] = useState<'chat' | 'hf' | 'gpu' | 'studio' | 'cli' | 'docs' | 'ollama' | 'comfy' | 'fliip' | 'sherman' | 'krewe' | 'research' | 'lab'>('chat');
   const [activePaper, setActivePaper] = useState<ArxivPaper | null>(null);
   const [pendingSquad, setPendingSquad] = useState<{ dolls: string[]; edges: [string, string][]; goal: string; note: string } | null>(null);
 
@@ -97,6 +98,8 @@ const App: React.FC = () => {
         return <GenSherman />;
       case 'krewe':
         return <KrewePage pendingSquad={pendingSquad} onSquadConsumed={() => setPendingSquad(null)} />;
+      case 'lab':
+        return <LabPage />;
       case 'research':
         return <ResearchPage onSelect={setActivePaper} />;
       default:
