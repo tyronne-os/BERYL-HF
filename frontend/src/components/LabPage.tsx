@@ -2,10 +2,11 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import {
   Sparkles, Mic, MicOff, Send, Power, Zap, Activity, Shield, Fingerprint,
-  Wind, Smile, Wand2, Gauge, GitBranch, Camera, Share2, Cpu, Circle,
-  RefreshCw, ChevronRight, X, Clock,
+  Wind, Smile, Wand2, Gauge, GitBranch, Camera, Share2, Cpu,
+  RefreshCw, ChevronRight, X, Clock, BrainCircuit,
 } from 'lucide-react';
 import { API } from '../api';
+import AmandaPlayer, { type AmandaPlayerHandle } from './AmandaPlayer';
 
 // ── The 13-doll pipeline (science on the back) ───────────────────────────────
 const PIPELINE = [
@@ -48,8 +49,13 @@ interface AmandaDNA {
   name: string; seed: number; face_hash: string; hair_type: string; hair_desc: string;
   physics_coeff: number; voice_sig: string; eyes: string; wardrobe: string; framing: string;
 }
-type Panel = 'inspector' | 'quality' | 'dna' | 'hair' | 'emotion' | 'prompt' | 'latency' | null;
+type Panel = 'inspector' | 'quality' | 'dna' | 'hair' | 'emotion' | 'prompt' | 'latency' | 'memory' | null;
 interface ChatMsg { role: 'you' | 'amanda'; text: string; ms?: number }
+interface Recollection {
+  rapport: number; sessions: number; last_summary: string;
+  facts: string[]; episodic_count: number;
+  recent_turns: { role: string; text: string }[];
+}
 
 const fmtTime = (s: number) => {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -60,7 +66,9 @@ const LabPage: React.FC = () => {
   const [status, setStatus] = useState<LabStatus | null>(null);
   const [dna, setDna] = useState<AmandaDNA | null>(null);
   const [image, setImage] = useState<string | null>(null);
-  const [genMeta, setGenMeta] = useState<{ gen_ms: number; resolution: string; fps: number; model: string } | null>(null);
+  const [genMeta, setGenMeta] = useState<{ gen_ms: number; resolution: string; fps: number; model: string; shot?: string; state?: string } | null>(null);
+  const [shot, setShot] = useState<'full' | 'close'>('full');
+  const [recollection, setRecollection] = useState<Recollection | null>(null);
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
 
@@ -80,6 +88,7 @@ const LabPage: React.FC = () => {
   const [latency, setLatency] = useState<Record<string, number>>({});
 
   const recogRef = useRef<any>(null);
+  const playerRef = useRef<AmandaPlayerHandle>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // ── Status meter poll ──────────────────────────────────────────────────────
@@ -107,7 +116,8 @@ const LabPage: React.FC = () => {
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, thinking]);
 
   // ── Generate Amanda ────────────────────────────────────────────────────────
-  const generateAmanda = useCallback(async (override?: string) => {
+  const generateAmanda = useCallback(async (override?: string, shotArg?: 'full' | 'close') => {
+    const useShot = shotArg || shot;
     setGenerating(true); setGenError(null);
     // animate the science running on the back
     let stage = 0;
@@ -117,12 +127,15 @@ const LabPage: React.FC = () => {
     }, 220);
     try {
       const { data } = await axios.post(`${API}/lab/generate-avatar`, {
-        ...(override ? { prompt: override } : {}),
+        shot: useShot,
+        ...(override ? { prompt: override, force: true } : {}),
       }, { timeout: 90000 });
       if (data.image_b64) {
         setImage(`data:${data.mime || 'image/jpeg'};base64,${data.image_b64}`);
-        setGenMeta({ gen_ms: data.gen_ms, resolution: data.frame_stats?.resolution, fps: data.frame_stats?.fps_target, model: data.model });
-        if (data.prompt) setPromptDraft(data.prompt);
+        setGenMeta({ gen_ms: data.gen_ms, resolution: data.frame_stats?.resolution,
+                     fps: data.frame_stats?.fps_target, model: data.model,
+                     shot: data.shot, state: data.state });
+        if (data.prompt && !override) setPromptDraft(data.prompt);
       } else {
         setGenError(data.error || 'No image returned (model may be cold — retry in ~20s)');
       }
@@ -133,18 +146,59 @@ const LabPage: React.FC = () => {
       setActiveStage(-1);
       setGenerating(false);
     }
-  }, []);
+  }, [shot]);
 
   // ── WAKE / SLEEP ───────────────────────────────────────────────────────────
   const wake = async () => {
+    setGenerating(true); setGenError(null);
+    let stage = 0;
+    const stageTimer = setInterval(() => { stage = (stage + 1) % PIPELINE.length; setActiveStage(stage); }, 200);
     try {
-      await axios.post(`${API}/lab/wake`, {
+      const { data } = await axios.post(`${API}/lab/wake`, {
         hardware: 't4-small',
         target_space: targetSpace || null,
-      });
-    } catch { /* surfaced via meter */ }
+        user_id: 'tj',
+        mode: 'test',
+      }, { timeout: 120000 });
+      if (data.image_b64) {
+        setImage(`data:${data.mime || 'image/jpeg'};base64,${data.image_b64}`);
+        setGenMeta({
+          gen_ms: data.gen_ms ?? 0,
+          resolution: data.frame_stats?.resolution || '768x1024',
+          fps: data.frame_stats?.fps_target || 24,
+          model: data.model || 'FLUX.1-dev',
+        });
+      }
+      if (data.greeting) {
+        setMessages(m => [...m, { role: 'amanda', text: data.greeting }]);
+      }
+      // play the real talking video if Ditto generated one
+      if (data.video_b64) {
+        playerRef.current?.play(data.video_b64, data.video_mime || 'video/mp4');
+      }
+      if (data.video_error) {
+        setMessages(m => [...m, { role: 'amanda', text: `*(video warming up — ${data.video_error.slice(0,80)})*` }]);
+      }
+    } catch (e: any) {
+      setGenError(e?.message || 'Wake failed');
+    } finally {
+      clearInterval(stageTimer); setActiveStage(-1); setGenerating(false);
+    }
   };
-  const sleep = async () => { try { await axios.post(`${API}/lab/sleep`); } catch {} };
+  const sleep = async () => {
+    try {
+      const { data } = await axios.post(`${API}/lab/sleep`);
+      const s = data?.reflection?.summary;
+      if (s) setMessages(m => [...m, { role: 'amanda', text: `*drifts to sleep* ${s}` }]);
+      fetchRecollection();
+    } catch {}
+  };
+
+  // ── Quantum Recollection (memory panel) ──────────────────────────────────────
+  const fetchRecollection = useCallback(async () => {
+    try { const { data } = await axios.get<Recollection>(`${API}/lab/recollection`); setRecollection(data); } catch {}
+  }, []);
+  useEffect(() => { if (panel === 'memory') fetchRecollection(); }, [panel, messages, fetchRecollection]);
 
   // ── Chat ───────────────────────────────────────────────────────────────────
   const send = async (text: string) => {
@@ -157,6 +211,9 @@ const LabPage: React.FC = () => {
       setMessages(m => [...m, { role: 'amanda', text: data.reply, ms: data.latency?.llm_ms }]);
       setLatency(data.latency || {});
       setEmotion(data.emotion || 'warm');
+      if (data.video_b64) {
+        playerRef.current?.play(data.video_b64, data.video_mime || 'video/mp4');
+      }
     } catch {
       setMessages(m => [...m, { role: 'amanda', text: '(connection warming — try again)' }]);
     } finally { setThinking(false); }
@@ -193,6 +250,7 @@ const LabPage: React.FC = () => {
     { id: 'inspector', icon: <Activity className="w-4 h-4" />, label: 'Frame Inspector' },
     { id: 'quality',   icon: <Shield className="w-4 h-4" />,   label: 'Quality Gate' },
     { id: 'dna',       icon: <Fingerprint className="w-4 h-4" />, label: 'Identity DNA' },
+    { id: 'memory',    icon: <BrainCircuit className="w-4 h-4" />, label: 'Recollection' },
     { id: 'hair',      icon: <Wind className="w-4 h-4" />,     label: 'Hair Physics' },
     { id: 'emotion',   icon: <Smile className="w-4 h-4" />,    label: 'Emotion' },
     { id: 'prompt',    icon: <Wand2 className="w-4 h-4" />,    label: 'Prompt / Seed' },
@@ -330,8 +388,7 @@ const LabPage: React.FC = () => {
                style={{ background: 'radial-gradient(ellipse at 50% 35%, rgba(244,169,138,0.06), transparent 60%)' }} />
 
           {image ? (
-            <img src={image} alt="Amanda"
-              className="max-h-[88%] max-w-[88%] object-contain rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.6)] border border-midnight-800" />
+            <AmandaPlayer ref={playerRef} stillSrc={image} shot={shot} />
           ) : (
             <div className="text-center">
               <div className="w-20 h-20 mx-auto rounded-full border-2 border-dashed border-midnight-800 flex items-center justify-center mb-3">
@@ -368,6 +425,9 @@ const LabPage: React.FC = () => {
 
           {/* frame inspector strip (always on, bottom) */}
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-midnight-950/85 backdrop-blur border border-midnight-800 rounded-full px-4 py-1.5 text-[10px] font-mono text-slate-400 z-10">
+            <span className={status?.active ? 'text-rose-400 font-bold' : 'text-slate-500'}>
+              {status?.active ? '● LIVE' : '○ STILL'}</span>
+            <span className="uppercase text-oldgold-400/80">{genMeta?.shot ?? shot}</span>
             <span className="text-emerald-400">● {genMeta?.fps ?? 24}fps</span>
             <span>{genMeta?.resolution ?? '768×1024'}</span>
             <span>gen {genMeta?.gen_ms ?? status?.last_gen_ms ?? 0}ms</span>
@@ -378,6 +438,14 @@ const LabPage: React.FC = () => {
 
           {/* stage actions (top-right of stage) */}
           <div className="absolute top-3 right-3 flex items-center gap-2 z-10">
+            <div className="flex items-center bg-midnight-950/85 border border-midnight-800 rounded-lg overflow-hidden text-[10px] font-bold">
+              {(['full', 'close'] as const).map(s => (
+                <button key={s} onClick={() => { setShot(s); generateAmanda(undefined, s); }} disabled={generating}
+                  className={`px-2.5 py-1.5 transition-all disabled:opacity-50 ${shot === s ? 'bg-oldgold-500 text-midnight-950' : 'text-slate-400 hover:text-oldgold-400'}`}>
+                  {s === 'full' ? 'FULL' : 'CLOSE'}
+                </button>
+              ))}
+            </div>
             <button onClick={() => generateAmanda()} disabled={generating}
               className="flex items-center gap-1.5 bg-midnight-950/85 border border-midnight-800 rounded-lg px-3 py-1.5 text-[10px] font-bold text-slate-300 hover:text-oldgold-400 hover:border-oldgold-500/40 disabled:opacity-50 transition-all">
               <RefreshCw className={`w-3 h-3 ${generating ? 'animate-spin' : ''}`} /> Regenerate
@@ -455,6 +523,41 @@ const LabPage: React.FC = () => {
                   <Row k="Voice sig" v={dna.voice_sig} mono />
                   <Row k="Wardrobe" v={dna.wardrobe} />
                   <Row k="Framing" v={dna.framing} />
+                </>
+              )}
+              {panel === 'memory' && (
+                <>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-slate-400">Beryl Quantum Recollection</span>
+                    <button onClick={fetchRecollection} className="text-slate-500 hover:text-oldgold-400" title="Refresh">
+                      <RefreshCw className="w-3 h-3" />
+                    </button>
+                  </div>
+                  {recollection ? (
+                    <>
+                      <Bar label={`Rapport · ${recollection.sessions} session(s)`}
+                           v={Math.round((recollection.rapport || 0) * 100)} />
+                      {recollection.last_summary && (
+                        <div className="bg-midnight-950 border border-midnight-800 rounded-lg p-2 text-[10px] text-slate-400 italic">
+                          “{recollection.last_summary}”
+                        </div>
+                      )}
+                      <p className="text-slate-500 mt-1">What she knows about you ({recollection.facts.length}):</p>
+                      <ul className="space-y-1">
+                        {recollection.facts.slice(0, 12).map((f, i) => (
+                          <li key={i} className="text-slate-300 text-[10px] flex gap-1.5">
+                            <span className="text-oldgold-500 shrink-0">•</span>{f}
+                          </li>
+                        ))}
+                        {recollection.facts.length === 0 && (
+                          <li className="text-slate-600 text-[10px]">No durable facts yet — talk to her, then SLEEP to consolidate.</li>
+                        )}
+                      </ul>
+                      <p className="text-slate-600 text-[10px] mt-2 leading-relaxed">
+                        {recollection.episodic_count} memories · stored locally on this device · private
+                      </p>
+                    </>
+                  ) : <p className="text-slate-500">Loading her memory of you…</p>}
                 </>
               )}
               {panel === 'hair' && (

@@ -24,6 +24,7 @@ from sse_starlette.sse import EventSourceResponse
 # Load environment variables
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Default brain for BERYL HF — MiniMax-M3 (427B MoE reasoning model, 1M ctx)
 # served via HF Inference Providers. Powers chat, preview build, and O.V.E voice.
@@ -3784,6 +3785,89 @@ def krewe_paper_squad_it(payload: dict):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# AMANDA VOICE + VIDEO ENGINE
+# GPT-Realtime-2 TTS → SadTalker (AIBRUH/ditto) → MP4
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _openai_tts(text: str, voice: str = "nova") -> bytes:
+    """Generate speech WAV bytes via OpenAI TTS-1-HD (gpt-realtime-2025-08-28 voice layer)."""
+    from openai import OpenAI as _OAI
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY not set")
+    client = _OAI(api_key=api_key)
+    resp = client.audio.speech.create(
+        model="tts-1-hd",
+        voice=voice,
+        input=text[:4096],
+        response_format="wav",
+    )
+    return resp.content
+
+
+def _ditto_generate(image_b64: str, audio_bytes: bytes) -> dict:
+    """
+    Send Amanda's still + TTS audio to SadTalker (our AIBRUH/ditto Space).
+    Returns {"video_b64": str, "mime": "video/mp4"} or {"error": str}.
+    Falls back to public vinthony/SadTalker if AIBRUH/ditto is cold.
+    """
+    import tempfile as _tmp
+    from gradio_client import Client as _GrC, handle_file as _hf
+
+    img_f = _tmp.NamedTemporaryFile(suffix=".jpg", delete=False)
+    aud_f = _tmp.NamedTemporaryFile(suffix=".wav", delete=False)
+    try:
+        img_f.write(base64.b64decode(image_b64)); img_f.close()
+        aud_f.write(audio_bytes); aud_f.close()
+
+        errors = []
+        # Primary: our branded Space (deploy via /lab/deploy-ditto)
+        # Fallback: public SadTalker Space
+        for space_id in ["AIBRUH/ditto", "vinthony/SadTalker"]:
+            try:
+                c = _GrC(space_id, hf_token=HF_TOKEN,
+                          httpx_kwargs={"timeout": 180})
+                # SadTalker API — works on both spaces
+                result = c.predict(
+                    _hf(img_f.name),  # source_image
+                    _hf(aud_f.name),  # driven_audio
+                    "crop",           # preprocess
+                    True,             # still_mode (less head wobble for portrait)
+                    False,            # use_enhancer
+                    1,                # batch_size
+                    256,              # size
+                    0,                # pose_style
+                    1.0,              # expression_scale
+                    api_name="/test",
+                )
+                # result is a local file path on the Space server
+                video_path = result if isinstance(result, str) else (result[0] if result else None)
+                if not video_path:
+                    errors.append(f"{space_id}: empty result"); continue
+                with open(video_path, "rb") as vf:
+                    video_b64 = base64.b64encode(vf.read()).decode()
+                return {"video_b64": video_b64, "mime": "video/mp4", "space": space_id}
+            except Exception as e:
+                errors.append(f"{space_id}: {str(e)[:120]}")
+                continue
+        return {"error": " | ".join(errors)}
+    finally:
+        try: os.unlink(img_f.name)
+        except: pass
+        try: os.unlink(aud_f.name)
+        except: pass
+
+
+def _lab_generate_video(greeting_text: str, image_b64: str) -> dict:
+    """Full voice+video generation: OpenAI TTS → Ditto → MP4 b64."""
+    try:
+        audio = _openai_tts(greeting_text)
+    except Exception as e:
+        return {"error": f"TTS failed: {e}"}
+    return _ditto_generate(image_b64, audio)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # OPERATION LAB — Single-side avatar sandbox (Amanda). "Light Switch" standard.
 # ECO (serverless) always works with zero idle cost. STUDIO wakes a dedicated HF
 # GPU ($/hr, billable, only on explicit WAKE). Live cost meter tracks every cent.
@@ -4019,12 +4103,25 @@ def lab_wake(req: LabWakeReq):
     qr.record_opening(uid, greeting)
     qr.remember(uid, "amanda", greeting, salience=0.5)
 
+    # ── GPT-Realtime-2 TTS + Ditto video generation (non-blocking best-effort) ──
+    video_result: dict = {}
+    img_b64 = render.get("image_b64")
+    if img_b64 and greeting:
+        try:
+            video_result = _lab_generate_video(greeting, img_b64)
+        except Exception as ve:
+            video_result = {"error": str(ve)}
+
     return {"status": "awake", "hardware_request": hw_result,
             "greeting": greeting, "shot": "full", "state": render.get("state"),
-            "image_b64": render.get("image_b64"), "mime": render.get("mime"),
-            "quality": render.get("quality"),
+            "image_b64": img_b64, "mime": render.get("mime"),
+            "quality": render.get("quality"), "gen_ms": render.get("gen_ms"),
+            "frame_stats": render.get("frame_stats"), "model": render.get("model"),
             "uid": uid, "mode": mode,
             "rapport": rel.get("rapport"), "sessions": rel.get("sessions"),
+            "video_b64": video_result.get("video_b64"),
+            "video_mime": video_result.get("mime", "video/mp4"),
+            "video_error": video_result.get("error"),
             **_lab_status_payload()}
 
 @app.post("/lab/sleep")
@@ -4177,10 +4274,27 @@ def lab_chat(req: LabChatReq):
     llm_ms = int((time.time() - t0) * 1000)
     qr.remember(uid, "amanda", reply)
 
+    # ── Generate talking video for this reply ──
+    t1 = time.time()
+    video_result: dict = {}
+    cache = _LAB_SESSION.get("still_cache", {})
+    cached_shot = cache.get("close") or cache.get("full")
+    cached_img = (cached_shot.get("image_b64") if isinstance(cached_shot, dict) else cached_shot) if cached_shot else None
+    if cached_img and reply:
+        try:
+            video_result = _lab_generate_video(reply, cached_img)
+        except Exception as ve:
+            video_result = {"error": str(ve)}
+    render_ms = int((time.time() - t1) * 1000)
+
     return {
         "reply": reply,
-        "latency": {"stt_ms": 0, "llm_ms": llm_ms, "tts_ms": 0, "lipsync_ms": 0, "render_ms": 0},
+        "latency": {"stt_ms": 0, "llm_ms": llm_ms, "tts_ms": 0,
+                    "lipsync_ms": render_ms, "render_ms": render_ms},
         "emotion": _lab_emotion(reply),
+        "video_b64": video_result.get("video_b64"),
+        "video_mime": video_result.get("mime", "video/mp4"),
+        "video_error": video_result.get("error"),
     }
 
 @app.get("/lab/amanda")
@@ -4205,6 +4319,27 @@ def lab_recollection(user_id: str = None):
     """Beryl Quantum Recollection summary for the SCIENCE-drawer memory panel."""
     uid = (user_id or _LAB_SESSION.get("uid", LAB_DEFAULT_UID))
     return qr.summary(uid)
+
+class LabClipReq(BaseModel):
+    b64: str
+    name: str = "amanda_clip.jpg"
+
+@app.post("/lab/save-clip")
+def lab_save_clip(req: LabClipReq):
+    """Save a recorded clip / frame-montage from the Living Portrait recorder.
+    Written OUTSIDE the backend watch dir so it never triggers a reload."""
+    import base64 as _b64
+    root = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"),
+                        "BerylLab", "clips")
+    os.makedirs(root, exist_ok=True)
+    data = req.b64.split(",", 1)[-1]   # strip data: URL prefix if present
+    path = os.path.join(root, os.path.basename(req.name))
+    try:
+        with open(path, "wb") as f:
+            f.write(_b64.b64decode(data))
+        return {"path": path, "bytes": os.path.getsize(path)}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 if __name__ == "__main__":

@@ -1,0 +1,14 @@
+torch
+torchvision
+torchaudio
+gradio>=4.0
+spaces
+face-alignment==1.3.5
+imageio
+imageio-ffmpeg
+pydub
+scipy
+kornia==0.6.8
+basicsr
+huggingface-hub
+safetensors
